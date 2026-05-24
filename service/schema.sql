@@ -27,6 +27,7 @@ create table if not exists submissions (
     valid integer,
     invalid_reason text,
     created_at text not null default current_timestamp,
+    started_at text,
     completed_at text
 );
 

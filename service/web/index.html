@@ -26,11 +26,12 @@
       }
 
       * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
 
       html, body {
         margin: 0;
         min-height: 100%;
-        zoom: 0.75;
+        zoom: 0.85;
         background:
           linear-gradient(transparent 23px, rgba(255, 255, 255, 0.02) 24px),
           linear-gradient(90deg, transparent 23px, rgba(255, 255, 255, 0.02) 24px),
@@ -41,7 +42,7 @@
         color: var(--text);
       }
 
-      body { font-family: var(--body-font); zoom: 0.8; }
+      body { font-family: var(--body-font); zoom: 0.85; }
       button, input, code { font: inherit; }
       button, input { border-radius: 0; }
 
@@ -287,6 +288,37 @@
         background: rgba(255, 255, 255, 0.015);
       }
 
+      .leaderboard-table tr.latest-run td {
+        background: rgba(229, 236, 232, 0.045);
+        box-shadow: inset 0 1px 0 rgba(229, 236, 232, 0.08), inset 0 -1px 0 rgba(229, 236, 232, 0.08);
+      }
+
+      .leaderboard-table tr.latest-run:hover td {
+        background: rgba(229, 236, 232, 0.06);
+      }
+
+      .latest-run-label {
+        border: 1px solid rgba(229, 236, 232, 0.28);
+        background: rgba(229, 236, 232, 0.08);
+        color: var(--text);
+        font-family: var(--mono-font);
+        font-size: 0.67rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        padding: 2px 6px;
+        text-transform: uppercase;
+      }
+
+      .leaderboard-table th,
+      .leaderboard-table td {
+        padding-right: 16px;
+      }
+
+      .leaderboard-table th:last-child,
+      .leaderboard-table td:last-child {
+        padding-right: 0;
+      }
+
       .rank {
         color: var(--accent);
         font-family: var(--display-font);
@@ -305,6 +337,49 @@
       .status.running { color: var(--warning); }
       .status.completed { color: var(--safe); }
       .status.failed { color: var(--danger); }
+
+      .team-meta,
+      .submission-meta,
+      .score-components {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px 10px;
+      }
+
+      .team-meta {
+        margin-top: 6px;
+      }
+
+      .submission-meta {
+        margin-top: 5px;
+      }
+
+      .score-primary {
+        font-family: var(--mono-font);
+        font-size: 1rem;
+        color: var(--text);
+      }
+
+      .score-components {
+        min-width: 220px;
+      }
+
+      .score-chip {
+        display: inline-grid;
+        grid-template-columns: auto auto;
+        gap: 5px;
+        align-items: baseline;
+        color: var(--muted);
+        font-family: var(--mono-font);
+        font-size: 0.72rem;
+        white-space: nowrap;
+      }
+
+      .score-chip strong {
+        color: var(--text);
+        font-weight: 500;
+      }
 
       .field {
         display: grid;
@@ -510,6 +585,38 @@
           to { opacity: 1; transform: translateY(0); }
         }
       }
+
+      .tab-bar {
+        display: flex;
+        gap: 4px;
+        margin-top: 20px;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 0;
+      }
+
+      .tab {
+        background: none;
+        border: 1px solid transparent;
+        border-bottom: none;
+        color: var(--muted);
+        cursor: pointer;
+        font-family: var(--mono-font);
+        font-size: 0.73rem;
+        letter-spacing: 0.08em;
+        padding: 7px 16px;
+        text-transform: uppercase;
+        transition: color 0.15s, border-color 0.15s;
+        position: relative;
+        bottom: -1px;
+      }
+
+      .tab:hover { color: var(--text); }
+
+      .tab.active {
+        color: var(--text);
+        border-color: var(--line);
+        background: var(--panel);
+      }
     </style>
   </head>
   <body>
@@ -553,8 +660,13 @@
 
           <div class="metric-grid">
             <div class="metric">
-              <span class="metric-label">Teams Ranked</span>
+              <span class="metric-label">Unique Teams</span>
               <div class="metric-value" id="teams-ranked">0</div>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Runs Evaluated</span>
+              <div class="metric-value" id="runs-evaluated">0</div>
+              <div class="microcopy" id="runs-total" style="margin-top:4px;"></div>
             </div>
             <div class="metric">
               <span class="metric-label">Best FoldScore</span>
@@ -562,6 +674,11 @@
             </div>
           </div>
         </section>
+
+        <div class="tab-bar">
+          <button class="tab active" id="tab-leaderboard" type="button">Leaderboard</button>
+          <button class="tab" id="tab-teams" type="button">Teams</button>
+        </div>
 
         <section class="content-grid" id="leaderboard-view">
           <div class="table-card">
@@ -590,23 +707,40 @@
               <div style="margin:16px 0;border-top:1px solid var(--line);"></div>
             </div>
 
-            <table>
+            <div style="margin-bottom:10px;font-family:var(--mono-font);font-size:0.73rem;color:var(--safe);letter-spacing:0.08em;text-transform:uppercase;">Completed Runs</div>
+            <table class="leaderboard-table">
               <thead>
                 <tr>
                   <th>#</th>
                   <th>Team</th>
-                  <th>Status</th>
                   <th>FoldScore</th>
-                  <th>GDT-HA</th>
-                  <th>lDDT-atom14</th>
-                  <th>MolProbity</th>
+                  <th>Components</th>
                   <th>Runtime</th>
-                  <th>Completed</th>
                 </tr>
               </thead>
               <tbody id="leaderboard-body"></tbody>
             </table>
             <div class="empty" id="leaderboard-empty" hidden>No scored submissions yet.</div>
+
+            <div id="failed-section" style="margin-top:24px;">
+              <div style="margin-bottom:10px;font-family:var(--mono-font);font-size:0.73rem;color:var(--danger);letter-spacing:0.08em;text-transform:uppercase;">Failed / Cancelled</div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Team</th>
+                    <th>Status</th>
+                    <th>Submitted</th>
+                  </tr>
+                </thead>
+                <tbody id="failed-body"></tbody>
+              </table>
+              <div class="empty" id="failed-empty" hidden>No failed submissions.</div>
+              <div id="failed-pagination" style="display:flex;align-items:center;gap:10px;margin-top:12px;" hidden>
+                <button class="button" id="failed-prev" type="button">&#8592;</button>
+                <span id="failed-page-label" style="font-family:var(--mono-font);font-size:0.74rem;color:var(--muted);"></span>
+                <button class="button" id="failed-next" type="button">&#8594;</button>
+              </div>
+            </div>
           </div>
 
           <div class="form-card">
@@ -712,6 +846,36 @@
             </div>
           </div>
         </section>
+
+        <section class="content-grid" id="teams-view" hidden>
+          <div class="table-card">
+            <div class="section-head">
+              <div>
+                <h3>Teams</h3>
+                <p>All registered teams and their submission activity.</p>
+              </div>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Team</th>
+                  <th>Runs Evaluated</th>
+                  <th>Total Runs</th>
+                  <th>Best FoldScore</th>
+                  <th>Last Run</th>
+                </tr>
+              </thead>
+              <tbody id="teams-body"></tbody>
+            </table>
+            <div class="empty" id="teams-empty" hidden>No teams yet.</div>
+            <div id="teams-pagination" style="display:flex;align-items:center;gap:10px;margin-top:12px;" hidden>
+              <button class="button" id="teams-prev" type="button">&#8592;</button>
+              <span id="teams-page-label" style="font-family:var(--mono-font);font-size:0.74rem;color:var(--muted);"></span>
+              <button class="button" id="teams-next" type="button">&#8594;</button>
+            </div>
+          </div>
+        </section>
       </main>
     </div>
 
@@ -720,8 +884,84 @@
       const leaderboardEmpty = document.getElementById("leaderboard-empty");
       const teamsRanked = document.getElementById("teams-ranked");
       const bestTmScore = document.getElementById("best-tm-score");
-
       const lastRefresh = document.getElementById("last-refresh");
+
+      // Tab switching
+      const leaderboardView = document.getElementById("leaderboard-view");
+      const teamsView = document.getElementById("teams-view");
+      const tabLeaderboard = document.getElementById("tab-leaderboard");
+      const tabTeams = document.getElementById("tab-teams");
+
+      tabLeaderboard.addEventListener("click", () => {
+        leaderboardView.hidden = false;
+        teamsView.hidden = true;
+        tabLeaderboard.classList.add("active");
+        tabTeams.classList.remove("active");
+      });
+
+      tabTeams.addEventListener("click", async () => {
+        leaderboardView.hidden = true;
+        teamsView.hidden = false;
+        tabTeams.classList.add("active");
+        tabLeaderboard.classList.remove("active");
+        await loadTeams();
+      });
+
+      const TEAMS_PAGE_SIZE = 10;
+      let teamsData = [];
+      let teamsPage = 0;
+
+      function renderTeamsPage() {
+        const body = document.getElementById("teams-body");
+        const empty = document.getElementById("teams-empty");
+        const pagination = document.getElementById("teams-pagination");
+        const label = document.getElementById("teams-page-label");
+        body.innerHTML = "";
+
+        if (teamsData.length === 0) {
+          empty.hidden = false;
+          pagination.hidden = true;
+          return;
+        }
+        empty.hidden = true;
+
+        const totalPages = Math.ceil(teamsData.length / TEAMS_PAGE_SIZE);
+        const start = teamsPage * TEAMS_PAGE_SIZE;
+        const page = teamsData.slice(start, start + TEAMS_PAGE_SIZE);
+
+        page.forEach((row, index) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td class="rank">${start + index + 1}</td>
+            <td>${row.team_name}</td>
+            <td>${row.evaluated_runs ?? 0}</td>
+            <td>${row.total_runs ?? 0}</td>
+            <td>${formatNumber(row.best_foldscore)}</td>
+            <td class="microcopy">${formatTimestamp(row.last_run_at)}</td>
+          `;
+          body.appendChild(tr);
+        });
+
+        pagination.hidden = totalPages <= 1;
+        label.textContent = `${teamsPage + 1} / ${totalPages}`;
+        document.getElementById("teams-prev").disabled = teamsPage === 0;
+        document.getElementById("teams-next").disabled = teamsPage >= totalPages - 1;
+      }
+
+      async function loadTeams() {
+        const payload = await fetchJson("/teams");
+        teamsData = payload.teams || [];
+        teamsPage = 0;
+        renderTeamsPage();
+      }
+
+      document.getElementById("teams-prev").addEventListener("click", () => {
+        if (teamsPage > 0) { teamsPage--; renderTeamsPage(); }
+      });
+      document.getElementById("teams-next").addEventListener("click", () => {
+        if (teamsPage < Math.ceil(teamsData.length / TEAMS_PAGE_SIZE) - 1) { teamsPage++; renderTeamsPage(); }
+      });
+
       const submissionForm = document.getElementById("submission-form");
       const flash = document.getElementById("flash");
       const submissionCard = document.getElementById("submission-card");
@@ -803,7 +1043,7 @@
             </td>
             <td><span class="status ${row.status}">${row.status}</span></td>
             <td class="microcopy">${formatTimestamp(row.created_at)}</td>
-            <td class="microcopy queue-elapsed" data-created="${row.created_at}">${formatElapsed(row.created_at)}</td>
+            <td class="microcopy queue-elapsed" data-started="${row.started_at || ''}">${row.started_at ? formatElapsed(row.started_at) : "—"}</td>
           `;
           body.appendChild(tr);
         });
@@ -811,7 +1051,7 @@
 
       setInterval(() => {
         document.querySelectorAll(".queue-elapsed").forEach((el) => {
-          el.textContent = formatElapsed(el.dataset.created);
+          el.textContent = el.dataset.started ? formatElapsed(el.dataset.started) : "—";
         });
       }, 1000);
 
@@ -819,40 +1059,114 @@
         leaderboardBody.innerHTML = "";
         leaderboardEmpty.hidden = rows.length !== 0;
 
+        const latestRunTime = Math.max(
+          ...rows.map((row) => new Date(row.completed_at || row.created_at || 0).getTime()).filter(Number.isFinite)
+        );
+
         rows.forEach((row, index) => {
           const description = row.description || "";
           const shortDescription = truncateText(description, 90);
           const hasScore = row.foldscore_auc_hidden !== null && row.foldscore_auc_hidden !== undefined;
           const scoredClass = hasScore ? "" : "style=\"opacity:0.5\"";
+          const runTime = new Date(row.completed_at || row.created_at || 0).getTime();
+          const isLatestRun = Number.isFinite(latestRunTime) && runTime === latestRunTime;
+          const completedAt = formatTimestamp(row.completed_at || row.created_at);
           const tr = document.createElement("tr");
+          if (isLatestRun) tr.classList.add("latest-run");
           tr.innerHTML = `
             <td class="rank">${index + 1}</td>
             <td>
               <div>${row.team_name}</div>
+              <div class="team-meta">
+                <span class="status ${row.status}">${row.status}</span>
+                <span class="microcopy">${completedAt}</span>
+                ${isLatestRun ? '<span class="latest-run-label">Latest Run</span>' : ''}
+              </div>
               <div class="microcopy clamped-text" title="${description.replace(/"/g, "&quot;")}">${shortDescription}</div>
-              <div class="microcopy">${row.submission_id}</div>
+              <div class="microcopy submission-meta">${row.submission_id}</div>
             </td>
-            <td><span class="status ${row.status}">${row.status}</span></td>
-            <td ${scoredClass}>${formatNumber(row.foldscore_auc_hidden)}</td>
-            <td ${scoredClass}>${formatNumber(row.gdt_ha_ca_auc)}</td>
-            <td ${scoredClass}>${formatNumber(row.lddt_atom14_auc)}</td>
-            <td ${scoredClass}>${formatNumber(row.molprobity_clash_atom14_auc)}</td>
+            <td ${scoredClass}><span class="score-primary">${formatNumber(row.foldscore_auc_hidden)}</span></td>
+            <td ${scoredClass}>
+              <div class="score-components">
+                <span class="score-chip">GDT <strong>${formatNumber(row.gdt_ha_ca_auc)}</strong></span>
+                <span class="score-chip">lDDT <strong>${formatNumber(row.lddt_atom14_auc)}</strong></span>
+                <span class="score-chip">Mol <strong>${formatNumber(row.molprobity_clash_atom14_auc)}</strong></span>
+              </div>
+            </td>
             <td>${formatRuntime(row.total_runtime_sec)}</td>
-            <td>${formatTimestamp(row.completed_at || row.created_at)}</td>
           `;
           leaderboardBody.appendChild(tr);
         });
 
-        const scoredRows = rows.filter((r) => r.foldscore_auc_hidden !== null && r.foldscore_auc_hidden !== undefined);
-        teamsRanked.textContent = `${rows.length} (${scoredRows.length} scored)`;
-        bestTmScore.textContent = scoredRows.length ? formatNumber(scoredRows[0].foldscore_auc_hidden) : "—";
+        const uniqueTeams = new Set(rows.map((r) => r.team_name)).size;
+        teamsRanked.textContent = uniqueTeams;
+        document.getElementById("runs-evaluated").textContent = rows.length;
+        const scoredRows = rows.filter((r) => r.public_val_foldscore !== null && r.public_val_foldscore !== undefined);
+        bestTmScore.textContent = scoredRows.length ? formatNumber(Math.max(...scoredRows.map((r) => r.public_val_foldscore))) : "—";
         lastRefresh.textContent = `Last refresh: ${new Date().toLocaleTimeString()}`;
       }
+
+      const FAILED_PAGE_SIZE = 5;
+      let failedData = [];
+      let failedPage = 0;
+
+      function renderFailedPage() {
+        const body = document.getElementById("failed-body");
+        const empty = document.getElementById("failed-empty");
+        const pagination = document.getElementById("failed-pagination");
+        const label = document.getElementById("failed-page-label");
+        body.innerHTML = "";
+
+        if (failedData.length === 0) {
+          empty.hidden = false;
+          pagination.hidden = true;
+          return;
+        }
+        empty.hidden = true;
+
+        const totalPages = Math.ceil(failedData.length / FAILED_PAGE_SIZE);
+        const start = failedPage * FAILED_PAGE_SIZE;
+        const page = failedData.slice(start, start + FAILED_PAGE_SIZE);
+
+        page.forEach((row) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>
+              <div>${row.team_name}</div>
+              <div class="microcopy">${row.submission_id}</div>
+            </td>
+            <td><span class="status ${row.status}">${row.status}</span></td>
+            <td class="microcopy">${formatTimestamp(row.created_at)}</td>
+          `;
+          body.appendChild(tr);
+        });
+
+        pagination.hidden = totalPages <= 1;
+        label.textContent = `${failedPage + 1} / ${totalPages}`;
+        document.getElementById("failed-prev").disabled = failedPage === 0;
+        document.getElementById("failed-next").disabled = failedPage >= totalPages - 1;
+      }
+
+      function renderFailed(failed) {
+        failedData = failed || [];
+        failedPage = 0;
+        renderFailedPage();
+      }
+
+      document.getElementById("failed-prev").addEventListener("click", () => {
+        if (failedPage > 0) { failedPage--; renderFailedPage(); }
+      });
+      document.getElementById("failed-next").addEventListener("click", () => {
+        if (failedPage < Math.ceil(failedData.length / FAILED_PAGE_SIZE) - 1) { failedPage++; renderFailedPage(); }
+      });
 
       async function loadLeaderboard() {
         const payload = await fetchJson("/leaderboard");
         renderQueue(payload.queue || []);
         renderLeaderboard(payload.rows || []);
+        renderFailed(payload.failed || []);
+        const total = (payload.rows || []).length + (payload.failed || []).length + (payload.queue || []).length;
+        document.getElementById("runs-total").textContent = `${total} total`;
       }
 
       function renderSubmission(payload) {
@@ -935,7 +1249,7 @@
           await new Promise((resolve) => setTimeout(resolve, 1000));
         }
         if (token === latestPollToken) {
-          setFlash("Run is still active. Use Load Latest to keep checking.", "warning");
+          setFlash("Run is still active. Refresh this page to keep checking.", "warning");
         }
       }
 

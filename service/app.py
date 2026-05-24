@@ -81,7 +81,7 @@ def init_db() -> None:
             row["name"]
             for row in connection.execute("pragma table_info(submissions)").fetchall()
         }
-        for col in ("original_filename", "config_json", "description", "track"):
+        for col in ("original_filename", "config_json", "description", "track", "started_at"):
             if col not in existing_columns:
                 connection.execute(f"alter table submissions add column {col} text")
         scores_columns = {
@@ -160,6 +160,8 @@ def set_submission_status(submission_id: str, *, status: str, valid: int | None 
     if invalid_reason is not None:
         clauses.append("invalid_reason = ?")
         values.append(invalid_reason)
+    if status == "running":
+        clauses.append("started_at = current_timestamp")
     if status in {"completed", "failed", "cancelled"}:
         clauses.append("completed_at = current_timestamp")
     values.append(submission_id)
@@ -604,6 +606,7 @@ def leaderboard() -> dict:
                 submissions.id as submission_id,
                 submissions.status,
                 submissions.created_at,
+                submissions.started_at,
                 submissions.original_filename,
                 submissions.description,
                 coalesce(submissions.track, 'limited') as track
@@ -613,4 +616,41 @@ def leaderboard() -> dict:
             order by submissions.created_at asc
             """
         ).fetchall()
-    return {"rows": [dict(row) for row in rows], "queue": [dict(row) for row in queue]}
+    failed = connection.execute(
+            """
+            select
+                teams.name as team_name,
+                submissions.id as submission_id,
+                submissions.status,
+                submissions.invalid_reason,
+                submissions.created_at,
+                submissions.completed_at,
+                submissions.original_filename
+            from submissions
+            join teams on teams.id = submissions.team_id
+            where submissions.status in ('failed', 'cancelled')
+            order by submissions.created_at desc
+            """
+        ).fetchall()
+    return {"rows": [dict(row) for row in rows], "queue": [dict(row) for row in queue], "failed": [dict(row) for row in failed]}
+
+
+@app.get("/teams")
+def teams() -> dict:
+    with connect() as connection:
+        rows = connection.execute(
+            """
+            select
+                teams.name as team_name,
+                count(submissions.id) as total_runs,
+                count(case when submissions.status = 'completed' then 1 end) as evaluated_runs,
+                max(scores.foldscore_auc_hidden) as best_foldscore,
+                max(submissions.created_at) as last_run_at
+            from teams
+            left join submissions on submissions.team_id = teams.id
+            left join scores on scores.submission_id = submissions.id
+            group by teams.id, teams.name
+            order by best_foldscore desc nulls last, total_runs desc
+            """
+        ).fetchall()
+    return {"teams": [dict(row) for row in rows]}

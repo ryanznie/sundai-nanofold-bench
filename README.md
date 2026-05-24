@@ -105,6 +105,12 @@ See [docs/ARCHITECTURE.md](/Users/ryanznie/Desktop/Important/Work/Sundai/sundai-
 [docs/DEPLOYMENT.md](/Users/ryanznie/Desktop/Important/Work/Sundai/sundai-protein-folding-bench/docs/DEPLOYMENT.md), and
 [docs/SUBMISSION_SPEC.md](/Users/ryanznie/Desktop/Important/Work/Sundai/sundai-protein-folding-bench/docs/SUBMISSION_SPEC.md).
 
+## Local Service Submission Flow
+
+The local FastAPI service exposes the leaderboard and upload UI from `service/web/`. After uploading a submission, the page polls the active run for up to five minutes. If the run is still active after that window, refresh the page to continue checking status and logs.
+
+Checkpoint files are local runtime artifacts and should stay outside git; the bundle builder copies or links them into the runtime bundle as needed.
+
 ## Local Service Env
 
 Use the repo-local `uv` environment:

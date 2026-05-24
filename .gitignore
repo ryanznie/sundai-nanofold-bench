@@ -11,5 +11,8 @@ build/
 *.db
 uploads/
 submission.zip
-\n/submission/
-\n# Exclude checkpoints from repository\n**/checkpoints/\n*.ckpt
+/submission/
+
+# Exclude checkpoints from repository
+**/checkpoints/
+*.ckpt
