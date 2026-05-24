@@ -1,6 +1,6 @@
 # Sundai NanoFold Bench
 
-`sundai-nanofold-bench` is the local service and submission scaffold for the Sundai nanoFold leaderboard. It provides the FastAPI service, static leaderboard UI, Docker worker flow, scorer integration, and example submission wiring used to run and evaluate competition submissions.
+`sundai-nanofold-bench` is the local service and submission scaffold for the Sundai nanoFold leaderboard. It provides the FastAPI service, static leaderboard UI, local evaluator, status tracking, and score persistence used to run and evaluate competition submissions.
 
 ## Data Source
 
@@ -14,16 +14,15 @@ Important: downloading and preprocessing the official data can take hours. If yo
 
 ## Runtime Contract
 
-Submissions are evaluated through the nanoFold contract rather than the removed SimpleFold/public_lb bundles. A submission should follow the API and tensor formats documented in the nanoFold competition repo, especially the `build_model`, `build_optimizer`, and `run_batch` contract used by the official tracks.
+A submission should follow the API and tensor formats documented in the nanoFold competition repo, especially the `build_model`, `build_optimizer`, and `run_batch` contract used by the official tracks.
 
-The local service in this repository handles upload, queueing, worker execution, status reporting, and leaderboard display. The competition data itself should be mounted or referenced from your local nanoFold data checkout.
+The local service in this repository handles upload, queueing, evaluation, status reporting, and leaderboard display. The competition data itself should be mounted or referenced from your local nanoFold data checkout.
 
 ## Production Pieces
 
 - `service/`: FastAPI service and leaderboard API with a SQL schema
 - `service/web/`: static frontend for leaderboard, submission upload, run status, and metrics
-- `worker/`: Docker-based worker callback flow
-- `docker/`: API and worker Dockerfiles plus a runtime spec
+- `docker/`: API Dockerfile and local compose setup
 - `sdk/`: lightweight client helpers for service interaction
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), and [docs/SUBMISSION_SPEC.md](docs/SUBMISSION_SPEC.md).

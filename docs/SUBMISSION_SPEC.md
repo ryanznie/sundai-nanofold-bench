@@ -1,107 +1,40 @@
 # Submission Spec
 
-## Upload Format
+Submissions are zip archives uploaded through the local service UI or `POST /submissions/upload`.
 
-Participants upload:
-
-```text
-baseline_submission/
-  train.py
-  config.json
-```
-
-## Entry Point
-
-The benchmark system runs:
-## Submission Bundle
-
-To submit to the leaderboard, create a `.zip` file with the following structure:
+## Required Zip Contents
 
 ```text
-submission.zip
-└── submission/
-    ├── train.py
-    └── config.json
-    └── checkpoints/          # optional
-        └── <simplefold_model>.ckpt
+config.yaml
+submission.py
+checkpoints/
+  ckpt_last.pt
 ```
 
-**The folder inside the zip must be named `submission/`.**
-If you upload a checkpoint, each `.ckpt` file under `submission/checkpoints/`
-must be at most `500 MB`.
-When an uploaded checkpoint is present, the backend uses that checkpoint for the
-current submission run instead of the bundled base checkpoint. If no uploaded
-checkpoint is present, the backend uses the bundled checkpoint for the selected
-`simplefold_model`.
+`checkpoints/ckpt_step_*.pt` is also accepted. When multiple step checkpoints are present, the evaluator uses the highest numbered checkpoint. If no `ckpt_step_*.pt` exists, it falls back to `checkpoints/ckpt_last.pt`.
 
-The CLI runner uses the following parameters internally:
+The zip should place these files at the archive root, not under an extra parent directory.
 
-```bash
-python3 benchmark.py \
-  --input_dir /input \
-  --output_dir /output \
-  --submission /workspace/submission/train.py \
-  --config /workspace/submission/config.json \
-  --timeout_sec 600
-```
-At execution time, the service overrides these config fields:
+## Runtime Contract
 
-- `backend = "torch"`
-- `nsample_per_protein = 1`
+The service copies the uploaded submission into the local nanoFold checkout configured by `NANOFOLD_REPO`. It then patches `config.yaml` with the active data paths and runs the official nanoFold `predict.py` and `score.py` entrypoints.
 
-MLX is disabled in the hosted starter backend.
+Submissions should follow the contract documented in the official nanoFold competition repository:
 
-## Input Contract
+https://github.com/ChrisHayduk/nanoFold-Competition/tree/main
 
-Mounted read-only at `/input`:
+That includes the model, optimizer, and batch entrypoints used by the official tracks, such as `build_model`, `build_optimizer`, and `run_batch`.
 
-- `/input/train/manifest.json`
-- `/input/val/manifest.json`
-- `/input/test/manifest.json`
-- `/input/checkpoints/simplefold_100M.ckpt`
+## Evaluator Environment
 
-Each test sample must provide a FASTA path relative to `test/manifest.json`:
+The service reads these environment variables:
 
-```json
-{
-  "target_id": "example_target",
-  "sequence_fasta_path": "fastas/example_target.fasta",
-  "baseline_structure_path": "baselines/example_target.cif",
-  "min_coverage": 0.95
-}
-```
+- `NANOFOLD_REPO`: local nanoFold competition checkout; default `/root/nanoFold-Competition`
+- `NANOFOLD_PYTHON`: Python executable used to run nanoFold scripts; default current interpreter
+- `NANOFOLD_FEATURES_DIR`: public processed features directory
+- `NANOFOLD_LABELS_DIR`: public processed labels directory
+- `NANOFOLD_HIDDEN_MANIFEST`: optional hidden manifest path
+- `NANOFOLD_HIDDEN_FEATURES_DIR`: optional hidden processed features directory
+- `NANOFOLD_HIDDEN_LABELS_DIR`: optional hidden processed labels directory
 
-`baseline_structure_path` is required only for public-dev scoring.
-
-Each FASTA input corresponds to one required prediction output.
-
-## Output Contract
-
-Required:
-
-```text
-/output/predictions/<target_id>_sampled_0.cif
-```
-
-That means one CIF per input FASTA, with `sampled_0` as the only accepted
-sample index.
-
-Optional:
-
-- `/output/checkpoint.pt`
-- `/output/metrics.json`
-- `/output/logs/*.log`
-
-## Invalid Conditions
-
-- timeout exceeded
-- crash or nonzero failure
-- missing prediction files
-- empty prediction files
-- no parseable CA trace in predicted structure
-- missing public-dev baseline structure
-
-## Ranking
-
-1. `mean_tm_score` descending
-2. `runtime_sec` ascending
+Downloading and preprocessing the official data can take hours. Reuse an existing prepared local checkout when available.

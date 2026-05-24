@@ -752,15 +752,14 @@
             </div>
             <form id="submission-form">
               <input type="hidden" name="created_by" value="local@localhost" />
-              <input type="hidden" name="runtime_spec" value="docker/worker/runtime-spec.json" />
               <div class="field">
                 <label for="team_name">Team Name</label>
                 <input id="team_name" name="team_name" placeholder="Enter team name" autocomplete="off" required />
               </div>
               <input type="hidden" name="track" value="limited" />
               <div class="field">
-                <label for="baseline_submission_file">Submission Zip</label>
-                <input id="baseline_submission_file" name="file" type="file" accept=".zip" required />
+                <label for="submission_file">Submission Zip</label>
+                <input id="submission_file" name="file" type="file" accept=".zip" required />
                 <div class="file-note">Required: <code>submission.py</code>, <code>config.yaml</code>, <code>checkpoints/ckpt_last.pt</code> (or <code>ckpt_step_*.pt</code>).</div>
               </div>
               <div class="actions">
@@ -1297,7 +1296,7 @@
 
       submissionForm.addEventListener("submit", async (event) => {
         event.preventDefault();
-        const fileInput = document.getElementById("baseline_submission_file");
+        const fileInput = document.getElementById("submission_file");
         if (!fileInput.files || fileInput.files.length === 0) {
           setFlash("Choose a submission zip first.", "error");
           return;

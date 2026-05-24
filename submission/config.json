@@ -1,9 +1,0 @@
-{
-  "simplefold_model": "simplefold_100M",
-  "backend": "torch",
-  "num_steps": 50,
-  "tau": 0.01,
-  "nsample_per_protein": 1,
-  "plddt": false,
-  "description": "100M, 1 steps."
-}

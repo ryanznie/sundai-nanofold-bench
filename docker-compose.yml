@@ -9,27 +9,13 @@ services:
       SUNDAI_DB_PATH: /data/leaderboard.db
       SUNDAI_UPLOAD_ROOT: /data/uploads
       SUNDAI_LOG_ROOT: /data/logs
-      SUNDAI_BUNDLE_ROOT: /opt/sundai/nanofold-data
+      NANOFOLD_REPO: /opt/sundai/nanofold-competition
       SUNDAI_LOG_LEVEL: INFO
     volumes:
       - ./service:/app/service
       - ./sdk:/app/sdk
-      - ./tools:/app/tools
-      - ./submission:/app/submission
-      - ./baseline:/app/reference
-      - ./benchmark.py:/app/benchmark.py
-      - ./scorer.py:/app/scorer.py
       - sundai-api-data:/data
-      - ${NANOFOLD_DATA_ROOT:?set NANOFOLD_DATA_ROOT to your local nanoFold data checkout}:/opt/sundai/nanofold-data:ro
-
-  worker:
-    build:
-      context: .
-      dockerfile: docker/worker/Dockerfile
-    profiles: ["worker"]
-    volumes:
-      - .:/workspace
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ${NANOFOLD_REPO_ROOT:?set NANOFOLD_REPO_ROOT to your local nanoFold-Competition checkout}:/opt/sundai/nanofold-competition:ro
 
 volumes:
   sundai-api-data:

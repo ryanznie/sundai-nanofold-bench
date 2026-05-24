@@ -14,12 +14,8 @@ RUN pip install --no-cache-dir uv
 
 COPY pyproject.toml /app/pyproject.toml
 COPY README.md /app/README.md
-COPY benchmark.py scorer.py /app/
 COPY sdk /app/sdk
-COPY tools /app/tools
 COPY service /app/service
-COPY submission /app/submission
-COPY baseline_submission /app/baseline_submission
 COPY docs /app/docs
 COPY docker /app/docker
 

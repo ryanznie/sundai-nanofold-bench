@@ -1,10 +1,10 @@
 # Local Service Handoff
 
-This document is the shortest path to wiring the benchmark into a separate local leaderboard service.
+This document is the shortest path to wiring the local leaderboard service to a prepared nanoFold checkout.
 
 ## Pin These Inputs
 
-### Benchmark Repo
+### Service Repo
 
 Use a pinned commit SHA from this repository. Do not integrate against a moving `main` branch reference for production evaluations.
 
@@ -16,59 +16,43 @@ Use the official nanoFold competition repository for data, manifests, preprocess
 https://github.com/ChrisHayduk/nanoFold-Competition/tree/main
 ```
 
-The dataset is intentionally not vendored here. Downloading and preprocessing the official data can take hours, so reuse an existing local checkout when one is already available.
+Downloading and preprocessing the official data can take hours, so reuse an existing local checkout when one is already available.
 
-## Runtime Contract
+## Evaluator Contract
 
-The worker should mount:
+The service expects:
 
-- `/input` -> read-only official nanoFold data or prepared evaluation bundle
-- `/output` -> writable run output directory
+- `NANOFOLD_REPO` -> local nanoFold competition checkout
+- `NANOFOLD_FEATURES_DIR` -> public processed features
+- `NANOFOLD_LABELS_DIR` -> public processed labels
+- optional hidden manifest/features/labels environment variables for hidden scoring
 
-The runner should execute the pinned benchmark command with:
+Uploaded submissions are zip archives containing `config.yaml`, `submission.py`, and a `checkpoints/` directory with `ckpt_last.pt` or `ckpt_step_*.pt`.
 
-```text
-INPUT_DIR=/input
-OUTPUT_DIR=/output
-TIMEOUT_SEC=600
-```
-
-## Submission Contract
-
-Submissions should follow the nanoFold competition API contract documented in the data repo, including the `build_model`, `build_optimizer`, and `run_batch` entrypoints used by official tracks.
-
-The benchmark service owns:
+## Service Responsibilities
 
 - upload validation
-- worker launch
-- service-side scoring integration
+- single-run queueing and cancellation
+- config patching for local data paths
+- nanoFold `predict.py` and `score.py` execution
 - final score extraction
 - leaderboard persistence
 
-## Recommended Worker Behavior
-
-1. Unpack submission into a workspace.
-2. Mount the local nanoFold data checkout or prepared bundle at `/input`.
-3. Mount an empty output directory at `/output`.
-4. Run the pinned benchmark command.
-5. Read result artifacts from `/output`.
-6. Persist logs and scores.
-
 ## Suggested Metadata To Store
 
-- `benchmark_repo`
-- `benchmark_commit_sha`
+- `service_repo`
+- `service_commit_sha`
 - `data_repo`
 - `data_commit_sha`
 - `data_root`
 - `track`
 - `runtime_sec`
 - `valid`
-- per-target metrics
+- public and hidden score summaries
 
 ## Recommended Defaults
 
-- official nanoFold public data only
+- official nanoFold public data only unless hidden data is configured
 - one GPU unless a track says otherwise
-- no internet during execution
+- no internet during evaluation
 - final ranking by the configured nanoFold track metric

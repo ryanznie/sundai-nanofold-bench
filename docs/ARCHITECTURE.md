@@ -1,40 +1,27 @@
 # Architecture
 
-## Public Repo
+## Service
 
-The public repo defines:
+The repo is centered on the local nanoFold leaderboard service.
 
-- bundle builder and bundle schema
-- benchmark runner and timeout enforcement
-- structure-based public-dev scoring
-- starter starter contract
+[service/app.py](../service/app.py) accepts uploaded submission zips, records queue/running/completed status, stores scores in SQLite, serves the static frontend, and exposes leaderboard/status APIs.
 
-## Production Services
+[service/evaluator.py](../service/evaluator.py) is the active evaluator. It extracts each uploaded zip, copies it into the configured nanoFold checkout, patches `config.yaml` with local data paths, runs nanoFold `predict.py`, runs nanoFold `score.py`, and persists public/hidden score summaries.
 
-### API
+## Data
 
-[service/app.py](/Users/ryanznie/Desktop/Important/Work/Sundai/sundai-protein-folding-bench/service/app.py)
-accepts starters, records status, stores scores, exposes a leaderboard, and
-serves the static frontend from [service/web/index.html](/Users/ryanznie/Desktop/Important/Work/Sundai/sundai-protein-folding-bench/service/web/index.html).
+Competition data is not stored in this repository. Use a local checkout of the official nanoFold competition repo:
 
-### Worker
+```text
+https://github.com/ChrisHayduk/nanoFold-Competition/tree/main
+```
 
-[worker/run_starter.py](/Users/ryanznie/Desktop/Important/Work/Sundai/sundai-protein-folding-bench/worker/run_starter.py)
-unpacks `starter.zip`, overlays it into the benchmark repo snapshot, runs the
-benchmark container, and reports results back to the API.
+The evaluator is configured with `NANOFOLD_REPO`, `NANOFOLD_FEATURES_DIR`, `NANOFOLD_LABELS_DIR`, and optional hidden-eval environment variables.
 
-### Runtime
+## Frontend
 
-The benchmark container should contain:
+`service/web/` contains the static leaderboard, upload form, metrics page, and submission status/log viewer. It talks directly to the FastAPI service.
 
-- pinned Python
-- pinned SimpleFold install
-- pinned benchmark repo snapshot
-- access to the benchmark bundle
+## Runtime
 
-The worker wrapper enforces:
-
-- `--gpus all`
-- `--network none`
-- read-only `/input`
-- writable `/output`
+The current local runtime is an in-process API evaluator with an exclusive job semaphore. Generated state lives outside git in the configured DB, upload, and log directories.

@@ -53,7 +53,7 @@ class SubmissionCreate(BaseModel):
     team_name: str = Field(min_length=1)
     created_by: str = Field(min_length=1)
     storage_key: str = Field(min_length=1)
-    runtime_spec: str = Field(default="docker/worker/runtime-spec.json")
+    runtime_spec: str = Field(default="nanofold-local")
 
 
 class SubmissionResult(BaseModel):
@@ -463,7 +463,7 @@ async def upload_submission(
     config_payload = load_submission_config_from_zip(storage_path)
     description = (config_payload or {}).get("description")
     submission_track = track or (config_payload or {}).get("track") or "limited"
-    runtime_spec = "docker/worker/runtime-spec.json"
+    runtime_spec = "nanofold-local"
 
     with connect() as connection:
         team_id, user_id = upsert_team(connection, team_name, created_by)
