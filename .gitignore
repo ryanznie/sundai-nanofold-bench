@@ -9,6 +9,7 @@ tmp/
 dist/
 build/
 *.db
+!service/leaderboard.example.db
 uploads/
 data/
 submission.zip

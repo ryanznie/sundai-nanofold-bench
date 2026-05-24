@@ -31,7 +31,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DEPLOYMENT.md](docs/DEPL
 
 The local FastAPI service exposes the leaderboard and upload UI from `service/web/`. After uploading a submission, the page polls the active run for up to five minutes. If the run is still active after that window, refresh the page to continue checking status and logs.
 
-Runtime artifacts, downloaded datasets, checkpoints, and generated bundles should stay outside git. Keep large local data in your nanoFold checkout or another local data directory and point your training/evaluation commands at that location.
+Runtime artifacts, downloaded datasets, checkpoints, generated bundles, logs, uploads, and the live `service/leaderboard.db` should stay outside git. Keep large local data in your nanoFold checkout or another local data directory and point your training/evaluation commands at that location. A sanitized schema-only dummy database is tracked at `service/leaderboard.example.db` for local bootstrapping and schema inspection.
 
 ## Local Service Env
 
