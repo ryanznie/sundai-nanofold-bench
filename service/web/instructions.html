@@ -49,6 +49,8 @@
         min-height: 100vh;
         display: grid;
         grid-template-columns: 320px minmax(0, 1fr);
+        background:
+          linear-gradient(90deg, rgba(10, 12, 14, 0.7) 0 320px, transparent 320px);
       }
 
       .rail {
@@ -229,6 +231,7 @@
       @media (max-width: 1120px) {
         .shell {
           grid-template-columns: 1fr;
+          background: transparent;
         }
 
         .rail {
