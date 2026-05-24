@@ -1,43 +1,52 @@
 # Sundai NanoFold Bench
 
-`sundai-nanofold-bench` is the local service and submission scaffold for the Sundai nanoFold leaderboard. It provides the FastAPI service, static leaderboard UI, local evaluator, status tracking, and score persistence used to run and evaluate competition submissions.
+`sundai-nanofold-bench` runs the local leaderboard service for the Sundai nanoFold competition. It provides the FastAPI service, static leaderboard UI, upload flow, in-process nanoFold evaluator, status tracking, and SQLite score persistence.
 
 ## Data Source
 
-Use the official nanoFold competition repository for data, manifests, preprocessing, and participant-facing training instructions:
+Competition data, manifests, preprocessing scripts, and participant training instructions live in the official nanoFold competition repository:
 
 https://github.com/ChrisHayduk/nanoFold-Competition/tree/main
 
-The nanoFold repo describes itself as a data-efficiency competition for protein structure prediction and includes the official train set, sample budget, hidden evaluation path, track policy, manifests, and submission API documentation.
+Downloading and preprocessing the official data can take hours. Reuse an existing prepared local checkout when available.
 
-Important: downloading and preprocessing the official data can take hours. If you already have a local clone with the data prepared, reuse that local copy rather than downloading it again. New users should start the download early and expect a long first setup.
-
-## Runtime Contract
-
-A submission should follow the API and tensor formats documented in the nanoFold competition repo, especially the `build_model`, `build_optimizer`, and `run_batch` contract used by the official tracks.
-
-The local service in this repository handles upload, queueing, evaluation, status reporting, and leaderboard display. The competition data itself should be mounted or referenced from your local nanoFold data checkout.
-
-## Production Pieces
-
-- `service/`: FastAPI service and leaderboard API with a SQL schema
-- `service/web/`: static frontend for leaderboard, submission upload, run status, and metrics
-- `docker/`: API Dockerfile and local compose setup
-- `sdk/`: lightweight client helpers for service interaction
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), and [docs/SUBMISSION_SPEC.md](docs/SUBMISSION_SPEC.md).
-
-## Local Service Submission Flow
-
-The local FastAPI service exposes the leaderboard and upload UI from `service/web/`. After uploading a submission, the page polls the active run for up to five minutes. If the run is still active after that window, refresh the page to continue checking status and logs.
-
-Runtime artifacts, downloaded datasets, checkpoints, generated bundles, logs, uploads, and the live `service/leaderboard.db` should stay outside git. Keep large local data in your nanoFold checkout or another local data directory and point your training/evaluation commands at that location. A sanitized schema-only dummy database is tracked at `service/leaderboard.example.db` for local bootstrapping and schema inspection.
-
-## Local Service Env
-
-Use the repo-local `uv` environment:
+## Quick Start
 
 ```bash
 uv sync
-uv run uvicorn service.app:app --reload
+export NANOFOLD_REPO=/path/to/nanoFold-Competition
+uv run uvicorn service.app:app --host 0.0.0.0 --port 8888
 ```
+
+Open `http://localhost:8888` or the exposed RunPod port URL.
+
+The service defaults to `service/leaderboard.db`. For production or shared deployments, set `SUNDAI_DB_PATH` to a persistent path outside the repo.
+
+## Submission Contract
+
+Upload a zip containing these files at the archive root:
+
+```text
+config.yaml
+submission.py
+checkpoints/
+  ckpt_last.pt
+```
+
+`checkpoints/ckpt_step_*.pt` is also accepted. The evaluator uses the highest numbered step checkpoint, falling back to `ckpt_last.pt`.
+
+Submissions must follow the model, optimizer, and batch API documented in the nanoFold competition repo, including `build_model`, `build_optimizer`, and `run_batch`.
+
+## Repository Layout
+
+- `service/`: FastAPI service, evaluator, schema, logging utilities
+- `service/web/`: static leaderboard, upload form, instructions, metrics page
+- `sdk/`: lightweight API/data helpers
+- `docker/`: API Dockerfile and startup script
+- `docs/`: architecture, deployment, handoff, schema, and submission details
+
+## Runtime State
+
+Do not commit runtime or competition data. The live DB, logs, uploads, checkpoints, generated bundles, and downloaded data stay outside git.
+
+A sanitized schema-only example database is tracked at `service/leaderboard.example.db` for bootstrap/schema inspection. The real `service/leaderboard.db` remains ignored.

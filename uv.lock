@@ -272,7 +272,7 @@ wheels = [
 ]
 
 [[package]]
-name = "sundai-protein-folding-bench"
+name = "sundai-nanofold-bench"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

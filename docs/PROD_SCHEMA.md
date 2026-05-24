@@ -1,70 +1,65 @@
 # Production Schema
 
-The API ships a runnable SQL schema at
-[service/schema.sql](/Users/ryanznie/Desktop/Important/Work/Sundai/sundai-protein-folding-bench/service/schema.sql).
+The service schema lives in [service/schema.sql](../service/schema.sql). `service/leaderboard.example.db` is a schema-only SQLite database generated from that file. The live leaderboard database is runtime state and should not be committed.
 
 ## Tables
 
-### teams
+### `teams`
 
-- `id`
-- `name`
-- `created_at`
+- `id`: deterministic team ID
+- `name`: unique display name
+- `created_at`: creation timestamp
 
-### users
+### `users`
 
-- `id`
-- `email`
-- `display_name`
-- `team_id`
-- `created_at`
+- `id`: deterministic user ID
+- `email`: submitter identifier
+- `display_name`: submitter display name
+- `team_id`: owning team
+- `created_at`: creation timestamp
 
-### submissions
+### `submissions`
 
-- `id`
-- `team_id`
-- `created_by_user_id`
-- `status`
-- `storage_key`
-- `runtime_spec`
-- `runtime_sec`
-- `valid`
-- `invalid_reason`
-- `created_at`
-- `completed_at`
+- `id`: submission UUID
+- `team_id`: owning team
+- `created_by_user_id`: submitting user
+- `status`: `queued`, `running`, `completed`, `failed`, or `cancelled`
+- `storage_key`: uploaded zip path or object-storage key
+- `runtime_spec`: evaluator/runtime label; currently `nanofold-local`
+- `original_filename`: uploaded filename
+- `config_json`: parsed `config.yaml` snapshot
+- `description`: optional config description
+- `track`: competition track, usually `limited`
+- `runtime_sec`: evaluation runtime
+- `valid`: integer boolean
+- `invalid_reason`: failure/cancel reason
+- `created_at`, `started_at`, `completed_at`: lifecycle timestamps
 
-### scores
+### `scores`
 
-- `submission_id`
-- `mean_tm_score`
-- `mean_lddt`
-- `mean_rmsd`
-- `mean_ca_rmsd`
-- `mean_gdt_ts_like`
-- `min_coverage`
-- `total_runtime_sec`
-- `raw_summary_json`
+- `submission_id`: scored submission
+- `track`: competition track
+- `foldscore_auc_hidden`: primary leaderboard score; hidden score when available, otherwise public validation score
+- `final_hidden_foldscore`: hidden FoldScore when available
+- `public_val_foldscore`: public validation FoldScore
+- `gdt_ha_ca_auc`: GDT-HA component
+- `lddt_atom14_auc`: lDDT-atom14 component
+- `molprobity_clash_atom14_auc`: MolProbity Clash component
+- `total_runtime_sec`: evaluation runtime
+- `raw_summary_json`: raw public/hidden score payload
 
-### submission_targets
+### `submission_targets`
 
-- `id`
+Reserved for per-target details when target-level persistence is enabled.
+
 - `submission_id`
 - `target_id`
-- `valid`
-- `tm_score`
-- `lddt`
-- `rmsd`
-- `ca_rmsd`
-- `gdt_ts_like`
-- `coverage`
-- `invalid_reason`
-- `matched_residues`
-- `reference_residues`
 
 ## Leaderboard Logic
 
-The API endpoint `/leaderboard` returns each team's best scored submission using:
+`GET /leaderboard` returns scored submissions ordered by:
 
-1. `valid` descending
-2. `mean_tm_score` descending
-3. `total_runtime_sec` ascending
+1. `foldscore_auc_hidden` descending
+2. `total_runtime_sec` ascending
+
+The UI also separates queued/running submissions and failed/cancelled submissions for review.

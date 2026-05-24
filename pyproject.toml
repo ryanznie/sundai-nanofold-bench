@@ -1,7 +1,7 @@
 [project]
-name = "sundai-protein-folding-bench"
+name = "sundai-nanofold-bench"
 version = "0.1.0"
-description = "Benchmark runner, service, and worker stack for the Sundai protein folding bench."
+description = "Local leaderboard service and evaluator for the Sundai nanoFold competition."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
