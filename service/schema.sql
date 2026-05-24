@@ -22,6 +22,7 @@ create table if not exists submissions (
     original_filename text,
     config_json text,
     description text,
+    track text,
     runtime_sec real,
     valid integer,
     invalid_reason text,
@@ -31,31 +32,14 @@ create table if not exists submissions (
 
 create table if not exists scores (
     submission_id text primary key references submissions(id),
-    mean_tm_score real,
-    mean_lddt real,
-    mean_rmsd real,
-    mean_ca_rmsd real,
-    mean_gdt_ts_like real,
-    min_coverage real,
+    track text,
+    foldscore_auc_hidden real,
+    final_hidden_foldscore real,
+    public_val_foldscore real,
+    gdt_ha_ca_auc real,
+    lddt_atom14_auc real,
     total_runtime_sec real,
     raw_summary_json text
 );
 
-create table if not exists submission_targets (
-    id integer primary key autoincrement,
-    submission_id text not null references submissions(id),
-    target_id text not null,
-    valid integer not null,
-    tm_score real,
-    lddt real,
-    rmsd real,
-    ca_rmsd real,
-    gdt_ts_like real,
-    coverage real,
-    invalid_reason text,
-    matched_residues integer,
-    reference_residues integer
-);
-
 create index if not exists idx_submissions_team_created_at on submissions(team_id, created_at desc);
-create index if not exists idx_submission_targets_submission_id on submission_targets(submission_id);

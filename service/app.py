@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from service.evaluator import (
-    BUNDLE_ROOT,
+    NANOFOLD_REPO,
     SubmissionCancelledError,
     evaluator_assets_ready,
     run_uploaded_submission,
@@ -80,20 +80,18 @@ def init_db() -> None:
             row["name"]
             for row in connection.execute("pragma table_info(submissions)").fetchall()
         }
-        if "original_filename" not in existing_columns:
-            connection.execute("alter table submissions add column original_filename text")
-        if "config_json" not in existing_columns:
-            connection.execute("alter table submissions add column config_json text")
-        if "description" not in existing_columns:
-            connection.execute("alter table submissions add column description text")
+        for col in ("original_filename", "config_json", "description", "track"):
+            if col not in existing_columns:
+                connection.execute(f"alter table submissions add column {col} text")
         connection.commit()
 
 
 def load_submission_config_from_zip(storage_path: Path) -> dict | None:
     try:
+        import yaml
         with ZipFile(storage_path) as archive:
-            with archive.open("submission/config.json") as handle:
-                return json.loads(handle.read().decode("utf-8"))
+            with archive.open("config.yaml") as handle:
+                return yaml.safe_load(handle.read().decode("utf-8")) or {}
     except Exception as exc:  # noqa: BLE001
         LOGGER.warning("failed to read submission config from zip path=%s error=%s", storage_path, exc)
         return None
@@ -103,33 +101,10 @@ def validate_submission_archive(storage_path: Path) -> None:
     try:
         with ZipFile(storage_path) as archive:
             names = set(archive.namelist())
-            if "submission/train.py" not in names:
-                raise HTTPException(
-                    status_code=400,
-                    detail="zip must contain submission/train.py",
-                )
-            if "submission/config.json" not in names:
-                raise HTTPException(
-                    status_code=400,
-                    detail="zip must contain submission/config.json",
-                )
-
-            checkpoint_infos = [
-                info
-                for info in archive.infolist()
-                if info.filename.startswith("submission/checkpoints/")
-                and info.filename.endswith(".ckpt")
-                and not info.is_dir()
-            ]
-            for info in checkpoint_infos:
-                if info.file_size > MAX_UPLOADED_CHECKPOINT_BYTES:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            f"checkpoint {Path(info.filename).name} exceeds the 500 MB limit "
-                            f"({info.file_size} bytes)"
-                        ),
-                    )
+            if "config.yaml" not in names:
+                raise HTTPException(status_code=400, detail="zip must contain config.yaml")
+            if not any(n.endswith(".py") for n in names):
+                raise HTTPException(status_code=400, detail="zip must contain at least one .py submission file")
     except BadZipFile as exc:
         storage_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=f"uploaded file is not a valid zip archive: {exc}") from exc
@@ -216,61 +191,32 @@ def persist_completion(submission_id: str, payload: SubmissionResult) -> None:
             connection.execute(
                 """
                 insert into scores(
-                    submission_id, mean_tm_score, mean_lddt, mean_rmsd, mean_ca_rmsd,
-                    mean_gdt_ts_like, min_coverage, total_runtime_sec, raw_summary_json
+                    submission_id, track, foldscore_auc_hidden, final_hidden_foldscore,
+                    public_val_foldscore, gdt_ha_ca_auc, lddt_atom14_auc,
+                    total_runtime_sec, raw_summary_json
                 ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(submission_id) do update set
-                    mean_tm_score=excluded.mean_tm_score,
-                    mean_lddt=excluded.mean_lddt,
-                    mean_rmsd=excluded.mean_rmsd,
-                    mean_ca_rmsd=excluded.mean_ca_rmsd,
-                    mean_gdt_ts_like=excluded.mean_gdt_ts_like,
-                    min_coverage=excluded.min_coverage,
+                    track=excluded.track,
+                    foldscore_auc_hidden=excluded.foldscore_auc_hidden,
+                    final_hidden_foldscore=excluded.final_hidden_foldscore,
+                    public_val_foldscore=excluded.public_val_foldscore,
+                    gdt_ha_ca_auc=excluded.gdt_ha_ca_auc,
+                    lddt_atom14_auc=excluded.lddt_atom14_auc,
                     total_runtime_sec=excluded.total_runtime_sec,
                     raw_summary_json=excluded.raw_summary_json
                 """,
                 (
                     submission_id,
-                    payload.summary.get("mean_tm_score"),
-                    payload.summary.get("mean_lddt"),
-                    payload.summary.get("mean_rmsd"),
-                    payload.summary.get("mean_ca_rmsd"),
-                    payload.summary.get("mean_gdt_ts_like"),
-                    payload.summary.get("min_coverage"),
+                    payload.summary.get("track"),
+                    payload.summary.get("foldscore_auc_hidden"),
+                    payload.summary.get("final_hidden_foldscore"),
+                    payload.summary.get("public_val_foldscore"),
+                    payload.summary.get("gdt_ha_ca_auc"),
+                    payload.summary.get("lddt_atom14_auc"),
                     payload.runtime_sec,
                     json.dumps(payload.summary),
                 ),
             )
-
-        if payload.targets is not None:
-            connection.execute(
-                "delete from submission_targets where submission_id = ?",
-                (submission_id,),
-            )
-            for target in payload.targets:
-                connection.execute(
-                    """
-                    insert into submission_targets(
-                        submission_id, target_id, valid, tm_score, lddt, rmsd,
-                        ca_rmsd, gdt_ts_like, coverage, invalid_reason,
-                        matched_residues, reference_residues
-                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        submission_id,
-                        target["target_id"],
-                        1 if target["valid"] else 0,
-                        target.get("tm_score"),
-                        target.get("lddt"),
-                        target.get("rmsd"),
-                        target.get("ca_rmsd"),
-                        target.get("gdt_ts_like"),
-                        target.get("coverage"),
-                        target.get("invalid_reason"),
-                        target.get("matched_residues"),
-                        target.get("reference_residues"),
-                    ),
-                )
         connection.commit()
     LOGGER.info(
         "submission persisted submission_id=%s status=%s valid=%s runtime_sec=%s has_summary=%s targets=%s",
@@ -300,23 +246,38 @@ def run_submission_job(submission_id: str, upload_path: Path) -> None:
             set_submission_status(submission_id, status="cancelled", valid=0, invalid_reason="cancelled by user")
             return
         set_submission_status(submission_id, status="running")
+        with connect() as _conn:
+            _sub = _conn.execute("select track from submissions where id = ?", (submission_id,)).fetchone()
+            _track = (_sub["track"] if _sub and _sub["track"] else "limited")
+
         result = run_uploaded_submission(
             upload_path,
+            track=_track,
             cancel_event=cancel_event,
             process_started=register_process,
             submission_log_path=log_path,
         )
-        scoring = result.get("scoring")
-        is_valid = bool(scoring["valid"]) if scoring else False
+        hidden = result.get("hidden_score") or {}
+        public = result.get("public_score") or {}
+        summary = {
+            "track": result.get("track", _track),
+            "foldscore_auc_hidden": hidden.get("foldscore_auc"),
+            "final_hidden_foldscore": hidden.get("foldscore"),
+            "public_val_foldscore": public.get("foldscore"),
+            "gdt_ha_ca_auc": hidden.get("gdt_ha_ca_auc"),
+            "lddt_atom14_auc": hidden.get("lddt_atom14_auc"),
+            "public_score": public,
+            "hidden_score": hidden,
+        }
         persist_completion(
             submission_id,
             SubmissionResult(
                 status="completed" if result.get("valid") else "failed",
-                valid=is_valid,
+                valid=bool(result.get("valid")),
                 runtime_sec=float(result["runtime_sec"]) if result.get("runtime_sec") is not None else None,
                 error=result.get("error"),
-                summary=scoring["summary"] if scoring else None,
-                targets=scoring["targets"] if scoring else None,
+                summary=summary if result.get("valid") else None,
+                targets=None,
             ),
         )
         append_submission_progress(
@@ -432,6 +393,7 @@ def create_submission(payload: SubmissionCreate) -> dict:
 async def upload_submission(
     team_name: str = Form(...),
     created_by: str = Form("local@localhost"),
+    track: str = Form("limited"),
     file: UploadFile = File(...),
 ) -> dict:
     filename = file.filename or ""
@@ -458,6 +420,7 @@ async def upload_submission(
     )
     config_payload = load_submission_config_from_zip(storage_path)
     description = (config_payload or {}).get("description")
+    submission_track = track or (config_payload or {}).get("track") or "limited"
     runtime_spec = "docker/worker/runtime-spec.json"
 
     with connect() as connection:
@@ -465,8 +428,9 @@ async def upload_submission(
         connection.execute(
             """
             insert into submissions(
-                id, team_id, created_by_user_id, status, storage_key, runtime_spec, original_filename, config_json, description
-            ) values (?, ?, ?, 'queued', ?, ?, ?, ?, ?)
+                id, team_id, created_by_user_id, status, storage_key, runtime_spec,
+                original_filename, config_json, description, track
+            ) values (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?)
             """,
             (
                 submission_id,
@@ -477,6 +441,7 @@ async def upload_submission(
                 safe_name,
                 json.dumps(config_payload, indent=2) if config_payload is not None else None,
                 description,
+                submission_track,
             ),
         )
         connection.commit()
@@ -554,17 +519,10 @@ def complete_submission(submission_id: str, payload: SubmissionResult) -> dict:
 @app.get("/runtime/config")
 def runtime_config() -> dict:
     ready, missing = evaluator_assets_ready()
-    try:
-        test_manifest = json.loads((BUNDLE_ROOT / "test" / "manifest.json").read_text())
-        targets = [sample["target_id"] for sample in test_manifest.get("samples", [])]
-    except Exception:  # noqa: BLE001
-        targets = []
     return {
         "ready": ready,
         "missing": missing,
-        "targets": targets,
-        "source_root": str(BUNDLE_ROOT),
-        "notes": "Using simplefold_hackathon_v1 with hidden test references scored outside the submission-visible bundle.",
+        "nanofold_repo": str(NANOFOLD_REPO),
     }
 
 
@@ -582,17 +540,18 @@ def leaderboard() -> dict:
                     submissions.created_at,
                     submissions.completed_at,
                     submissions.description,
-                    scores.mean_tm_score,
-                    scores.mean_lddt,
-                    scores.mean_ca_rmsd,
-                    scores.mean_gdt_ts_like,
-                    scores.min_coverage,
+                    coalesce(scores.track, submissions.track) as track,
+                    scores.foldscore_auc_hidden,
+                    scores.final_hidden_foldscore,
+                    scores.public_val_foldscore,
+                    scores.gdt_ha_ca_auc,
+                    scores.lddt_atom14_auc,
                     scores.total_runtime_sec,
                     row_number() over (
-                        partition by teams.id
+                        partition by teams.id, coalesce(scores.track, submissions.track)
                         order by
                             coalesce(submissions.valid, 0) desc,
-                            scores.mean_tm_score desc,
+                            scores.foldscore_auc_hidden desc nulls last,
                             scores.total_runtime_sec asc
                     ) as team_rank
                 from submissions
@@ -602,7 +561,11 @@ def leaderboard() -> dict:
             select *
             from ranked
             where team_rank = 1
-            order by coalesce(valid, 0) desc, mean_tm_score desc, total_runtime_sec asc
+            order by
+                track asc,
+                coalesce(valid, 0) desc,
+                foldscore_auc_hidden desc nulls last,
+                total_runtime_sec asc
             """
         ).fetchall()
     return {"rows": [dict(row) for row in rows]}

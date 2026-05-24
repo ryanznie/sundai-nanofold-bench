@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Sundai Folding Bench</title>
+    <title>Sundai NanoFold Bench</title>
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
     <style>
       :root {
@@ -515,10 +515,10 @@
     <div class="shell">
       <aside class="rail">
         <div class="rail-top">
-          <p class="kicker">Protein Folding Bench</p>
-          <h1>Sundai SimpleFold</h1>
+          <p class="kicker">NanoFold Competition</p>
+          <h1>Sundai NanoFold</h1>
           <p class="lead">
-            Public ranking and structure-quality inspection.
+            Data-efficiency leaderboard for protein structure prediction.
           </p>
         </div>
 
@@ -556,11 +556,11 @@
               <div class="metric-value" id="teams-ranked">0</div>
             </div>
             <div class="metric">
-              <span class="metric-label">Best Mean TM-score</span>
+              <span class="metric-label">Best FoldScore AUC</span>
               <div class="metric-value" id="best-tm-score">-</div>
             </div>
             <div class="metric">
-              <span class="metric-label">Fastest Best Runtime</span>
+              <span class="metric-label">Best Hidden FoldScore</span>
               <div class="metric-value" id="fastest-runtime">-</div>
             </div>
           </div>
@@ -580,11 +580,13 @@
                 <tr>
                   <th>#</th>
                   <th>Team</th>
+                  <th>Track</th>
                   <th>Status</th>
-                  <th>TM-score</th>
-                  <th>GDT-TS</th>
-                  <th>lDDT</th>
-                  <th>CA-RMSD</th>
+                  <th>FoldScore AUC</th>
+                  <th>Hidden FoldScore</th>
+                  <th>Public FoldScore</th>
+                  <th>GDT-HA AUC</th>
+                  <th>lDDT AUC</th>
                   <th>Runtime</th>
                   <th>Completed</th>
                 </tr>
@@ -598,7 +600,7 @@
             <div class="section-head">
               <div>
                 <h3>Upload Submission</h3>
-                <p>Queue a run by uploading `submission.zip`. The backend reads `submission/config.json` directly from the archive.</p>
+                <p>Upload `submission.zip` with `submission.py` and `config.yaml` at root. Training runs on official data.</p>
               </div>
             </div>
             <form id="submission-form">
@@ -609,9 +611,17 @@
                 <input id="team_name" name="team_name" placeholder="Enter team name" autocomplete="off" required />
               </div>
               <div class="field">
+                <label for="track">Track</label>
+                <select id="track" name="track" style="width:100%;border:1px solid var(--line-strong);background:var(--panel-soft);color:var(--text);padding:12px 13px;font:inherit;">
+                  <option value="limited">limited — 20k samples (main leaderboard)</option>
+                  <option value="research_large">research_large — 100k samples</option>
+                  <option value="unlimited">unlimited — no budget cap</option>
+                </select>
+              </div>
+              <div class="field">
                 <label for="baseline_submission_file">Submission Zip</label>
                 <input id="baseline_submission_file" name="file" type="file" accept=".zip" required />
-                <div class="file-note">Expected upload: `submission.zip` containing a `submission/` folder with `train.py` and `config.json`.</div>
+                <div class="file-note">Expected: `submission.zip` with `submission.py` and `config.yaml` at root.</div>
               </div>
               <div class="actions">
                 <button class="button primary" type="submit" id="submit-button">Upload And Queue</button>
@@ -655,24 +665,24 @@
                   <div id="detail-filename"></div>
                 </div>
                 <div>
-                  <div class="meta-label">Mean TM-score</div>
+                  <div class="meta-label">Track</div>
+                  <div id="detail-track"></div>
+                </div>
+                <div>
+                  <div class="meta-label">FoldScore AUC</div>
                   <div id="detail-tm-score"></div>
                 </div>
                 <div>
-                  <div class="meta-label">Mean GDT-TS</div>
+                  <div class="meta-label">Hidden FoldScore</div>
                   <div id="detail-gdt-ts"></div>
                 </div>
                 <div>
-                  <div class="meta-label">Mean lDDT</div>
+                  <div class="meta-label">Public FoldScore</div>
                   <div id="detail-lddt"></div>
                 </div>
                 <div>
-                  <div class="meta-label">Mean CA-RMSD</div>
+                  <div class="meta-label">GDT-HA AUC</div>
                   <div id="detail-ca-rmsd"></div>
-                </div>
-                <div>
-                  <div class="meta-label">Targets</div>
-                  <div id="detail-targets"></div>
                 </div>
                 <div>
                   <div class="meta-label">Submitted</div>
@@ -765,11 +775,13 @@
               <div class="microcopy clamped-text" title="${description.replace(/"/g, "&quot;")}">${shortDescription}</div>
               <div class="microcopy">${row.submission_id}</div>
             </td>
+            <td><span class="pill">${row.track || "-"}</span></td>
             <td><span class="status ${row.status}">${row.status}</span></td>
-            <td>${formatNumber(row.mean_tm_score)}</td>
-            <td>${formatNumber(row.mean_gdt_ts_like)}</td>
-            <td>${formatNumber(row.mean_lddt)}</td>
-            <td>${formatNumber(row.mean_ca_rmsd)}</td>
+            <td>${formatNumber(row.foldscore_auc_hidden)}</td>
+            <td>${formatNumber(row.final_hidden_foldscore)}</td>
+            <td>${formatNumber(row.public_val_foldscore)}</td>
+            <td>${formatNumber(row.gdt_ha_ca_auc)}</td>
+            <td>${formatNumber(row.lddt_atom14_auc)}</td>
             <td>${formatRuntime(row.total_runtime_sec)}</td>
             <td>${formatTimestamp(row.completed_at || row.created_at)}</td>
           `;
@@ -777,9 +789,9 @@
         });
 
         teamsRanked.textContent = String(rows.length);
-        bestTmScore.textContent = rows.length ? formatNumber(rows[0].mean_tm_score) : "-";
-        const runtimes = rows.map((row) => Number(row.total_runtime_sec)).filter((value) => Number.isFinite(value));
-        fastestRuntime.textContent = runtimes.length ? formatRuntime(Math.min(...runtimes)) : "-";
+        bestTmScore.textContent = rows.length ? formatNumber(rows[0].foldscore_auc_hidden) : "-";
+        const hiddenScores = rows.map((row) => Number(row.final_hidden_foldscore)).filter((v) => Number.isFinite(v));
+        fastestRuntime.textContent = hiddenScores.length ? formatNumber(Math.max(...hiddenScores)) : "-";
         lastRefresh.textContent = `Last refresh: ${new Date().toLocaleTimeString()}`;
       }
 
@@ -807,11 +819,11 @@
         document.getElementById("detail-runtime").textContent = formatRuntime(submission.runtime_sec);
         document.getElementById("detail-valid").textContent = submission.valid === 1 ? "true" : submission.valid === 0 ? "false" : "-";
         document.getElementById("detail-filename").textContent = submission.original_filename || "-";
-        document.getElementById("detail-tm-score").textContent = formatNumber(score.mean_tm_score);
-        document.getElementById("detail-gdt-ts").textContent = formatNumber(score.mean_gdt_ts_like);
-        document.getElementById("detail-lddt").textContent = formatNumber(score.mean_lddt);
-        document.getElementById("detail-ca-rmsd").textContent = formatNumber(score.mean_ca_rmsd);
-        document.getElementById("detail-targets").textContent = String(targets.length);
+        document.getElementById("detail-track").textContent = score.track || submission.track || "-";
+        document.getElementById("detail-tm-score").textContent = formatNumber(score.foldscore_auc_hidden);
+        document.getElementById("detail-gdt-ts").textContent = formatNumber(score.final_hidden_foldscore);
+        document.getElementById("detail-lddt").textContent = formatNumber(score.public_val_foldscore);
+        document.getElementById("detail-ca-rmsd").textContent = formatNumber(score.gdt_ha_ca_auc);
         document.getElementById("detail-created-at").textContent = formatTimestamp(submission.created_at);
         document.getElementById("detail-completed-at").textContent = formatTimestamp(submission.completed_at);
         document.getElementById("detail-config").textContent = payload.submission_config

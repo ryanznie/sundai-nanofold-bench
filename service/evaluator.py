@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import os
 import json
 import logging
+import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -10,249 +11,115 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
-from shutil import copyfile
-from shutil import copytree
 from threading import Event
 from typing import Callable
 
-from scorer import score_split
-from sdk.simplefold import cached_runner_command
-from service.logging_utils import append_submission_progress, env_path
+import yaml
 
+from service.logging_utils import append_submission_progress, env_path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LOGGER = logging.getLogger("sundai.evaluator")
-SIMPLEFOLD_ROOT = env_path(
-    "SUNDAI_SIMPLEFOLD_ROOT",
-    "/Users/ryanznie/Desktop/Important/Work/Sundai/ml-simplefold",
-)
-DEFAULT_SIMPLEFOLD_PYTHON = SIMPLEFOLD_ROOT / ".venv" / "bin" / "python"
-SIMPLEFOLD_PYTHON = Path(
-    os.environ.get(
-        "SUNDAI_SIMPLEFOLD_PYTHON",
-        str(DEFAULT_SIMPLEFOLD_PYTHON if DEFAULT_SIMPLEFOLD_PYTHON.exists() else sys.executable),
-    )
-).expanduser()
-BUNDLE_ROOT = env_path(
-    "SUNDAI_BUNDLE_ROOT",
-    "/Users/ryanznie/Desktop/Important/Work/Sundai/bundles/simplefold_hackathon_v1",
-)
-CACHE_SEED_ROOT = env_path(
-    "SUNDAI_SIMPLEFOLD_CACHE_SEED_ROOT",
-    str(SIMPLEFOLD_ROOT / "artifacts" / "smoke_test" / "cache"),
-)
-CHECKPOINT_PATH = BUNDLE_ROOT / "checkpoints" / "simplefold_100M.ckpt"
+
+NANOFOLD_REPO = env_path("NANOFOLD_REPO", "/root/nanoFold-Competition")
+NANOFOLD_PYTHON = Path(os.environ.get("NANOFOLD_PYTHON", sys.executable))
+NANOFOLD_FEATURES_DIR = env_path("NANOFOLD_FEATURES_DIR", str(NANOFOLD_REPO / "data" / "processed_features"))
+NANOFOLD_LABELS_DIR = env_path("NANOFOLD_LABELS_DIR", str(NANOFOLD_REPO / "data" / "processed_labels"))
+NANOFOLD_HIDDEN_MANIFEST = os.environ.get("NANOFOLD_HIDDEN_MANIFEST", "")
+NANOFOLD_HIDDEN_FEATURES_DIR = os.environ.get("NANOFOLD_HIDDEN_FEATURES_DIR", "")
+NANOFOLD_HIDDEN_LABELS_DIR = os.environ.get("NANOFOLD_HIDDEN_LABELS_DIR", "")
 
 
 class SubmissionCancelledError(RuntimeError):
     pass
 
 
-def should_record_submission_progress(line: str) -> bool:
-    return line.startswith("[progress]")
-
-
 def evaluator_assets_ready() -> tuple[bool, list[str]]:
     required = [
-        BUNDLE_ROOT / "manifest.json",
-        BUNDLE_ROOT / "test" / "manifest.json",
-        CHECKPOINT_PATH,
-        CACHE_SEED_ROOT / "ccd.pkl",
-        CACHE_SEED_ROOT / "boltz1_conf.ckpt",
+        NANOFOLD_REPO / "train.py",
+        NANOFOLD_REPO / "eval.py",
+        NANOFOLD_REPO / "score.py",
+        NANOFOLD_FEATURES_DIR,
+        NANOFOLD_LABELS_DIR,
+        NANOFOLD_REPO / "data" / "manifests" / "train.txt",
+        NANOFOLD_REPO / "data" / "manifests" / "val.txt",
     ]
-    missing = [str(path) for path in required if not path.exists()]
+    missing = [str(p) for p in required if not Path(p).exists()]
     LOGGER.info(
-        "evaluator assets check ready=%s bundle_root=%s simplefold_root=%s cache_seed_root=%s missing=%s",
+        "evaluator assets check ready=%s nanofold_repo=%s missing=%s",
         len(missing) == 0,
-        BUNDLE_ROOT,
-        SIMPLEFOLD_ROOT,
-        CACHE_SEED_ROOT,
+        NANOFOLD_REPO,
         missing,
     )
     return len(missing) == 0, missing
 
 
-def _extract_submission(upload_path: Path, workspace_dir: Path) -> tuple[Path, Path, Path]:
+def hidden_assets_available() -> bool:
+    return bool(NANOFOLD_HIDDEN_MANIFEST and NANOFOLD_HIDDEN_FEATURES_DIR and NANOFOLD_HIDDEN_LABELS_DIR)
+
+
+def _extract_submission(upload_path: Path, workspace_dir: Path) -> tuple[Path, Path]:
     extract_dir = workspace_dir / "submission_src"
     extract_dir.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(upload_path) as archive:
         archive.extractall(extract_dir)
 
-    submission_path = extract_dir / "submission" / "train.py"
-    config_path = extract_dir / "submission" / "config.json"
-    if not submission_path.exists():
-        raise FileNotFoundError("uploaded zip must contain submission/train.py")
+    config_path = extract_dir / "config.yaml"
     if not config_path.exists():
-        raise FileNotFoundError("uploaded zip must contain submission/config.json")
+        raise FileNotFoundError("uploaded zip must contain config.yaml")
+    if not list(extract_dir.glob("*.py")):
+        raise FileNotFoundError("uploaded zip must contain at least one .py submission file")
+
     LOGGER.info("submission extracted upload_path=%s workspace_dir=%s", upload_path, workspace_dir)
-    return submission_path, config_path, extract_dir / "submission"
+    return extract_dir, config_path
 
 
-def sanitize_submission_bundle(bundle_dir: Path) -> None:
-    manifest_path = bundle_dir / "test" / "manifest.json"
-    manifest = json.loads(manifest_path.read_text())
-    manifest["samples"] = []
-    manifest_path.write_text(json.dumps(manifest, indent=2))
+def _build_patched_config(extract_dir: Path, run_name: str, workspace_dir: Path, track: str) -> Path:
+    raw_config = extract_dir / "config.yaml"
+    with raw_config.open("r") as f:
+        config = yaml.safe_load(f) or {}
 
-    for dirname in ("references", "processed", "samples", "esm", "fastas"):
-        target_dir = bundle_dir / "test" / dirname
-        if target_dir.exists():
-            for path in sorted(target_dir.rglob("*"), reverse=True):
-                if path.is_file():
-                    path.unlink()
-                elif path.is_dir():
-                    path.rmdir()
-            target_dir.rmdir()
+    config["run_name"] = run_name
+    config["track"] = track
+    config.setdefault("data", {})
+    config["data"]["processed_features_dir"] = str(NANOFOLD_FEATURES_DIR)
+    config["data"]["processed_labels_dir"] = str(NANOFOLD_LABELS_DIR)
+    config["data"]["train_manifest"] = str(NANOFOLD_REPO / "data" / "manifests" / "train.txt")
+    config["data"]["val_manifest"] = str(NANOFOLD_REPO / "data" / "manifests" / "val.txt")
 
+    patched_path = workspace_dir / "runtime_config.yaml"
+    with patched_path.open("w") as f:
+        yaml.dump(config, f, default_flow_style=False)
 
-def _build_bundle(bundle_dir: Path) -> None:
-    copytree(BUNDLE_ROOT, bundle_dir, dirs_exist_ok=True)
-    sanitize_submission_bundle(bundle_dir)
-    LOGGER.info("live bundle copied bundle_dir=%s", bundle_dir)
-    LOGGER.info("submission bundle sanitized test references removed bundle_dir=%s", bundle_dir)
+    LOGGER.info("patched config written run_name=%s track=%s path=%s", run_name, track, patched_path)
+    return patched_path
 
 
-def resolve_uploaded_ckpt_dir(
+def _place_submission(extract_dir: Path, run_name: str) -> Path:
+    submission_dest = NANOFOLD_REPO / "submissions" / run_name
+    if submission_dest.exists():
+        shutil.rmtree(submission_dest)
+    shutil.copytree(extract_dir, submission_dest)
+    LOGGER.info("submission placed at %s", submission_dest)
+    return submission_dest
+
+
+def _stream_process(
+    args: list[str],
     *,
-    submission_dir: Path,
-    workspace_dir: Path,
-    model_name: str,
-) -> tuple[Path | None, str | None]:
-    uploaded_ckpt_dir = submission_dir / "checkpoints"
-    if not uploaded_ckpt_dir.exists():
-        return None, None
-
-    named_ckpt = uploaded_ckpt_dir / f"{model_name}.ckpt"
-    if named_ckpt.exists():
-        return uploaded_ckpt_dir, f"uploaded checkpoint {named_ckpt.name}"
-
-    candidates = sorted(uploaded_ckpt_dir.glob("*.ckpt"))
-    if len(candidates) != 1:
-        return None, None
-
-    remapped_dir = workspace_dir / "uploaded_checkpoints"
-    remapped_dir.mkdir(parents=True, exist_ok=True)
-    copyfile(candidates[0], remapped_dir / f"{model_name}.ckpt")
-    return remapped_dir, f"uploaded checkpoint {candidates[0].name} remapped to {model_name}.ckpt"
-
-
-def _build_runtime_config(uploaded_config_path: Path, workspace_dir: Path, bundle_dir: Path, submission_dir: Path) -> tuple[Path, str]:
-    config = json.loads(uploaded_config_path.read_text())
-    config.setdefault("num_steps", 50)
-    config.setdefault("tau", 0.01)
-    model_name = str(config.get("simplefold_model", "simplefold_100M"))
-    config["nsample_per_protein"] = 1
-    config["backend"] = "torch"
-    config["plddt"] = bool(config.get("plddt", False))
-    config["simplefold_command"] = [
-        str(SIMPLEFOLD_PYTHON),
-        "-c",
-        "from simplefold.cli import main; main()",
-    ]
-    config["simplefold_workdir"] = str(SIMPLEFOLD_ROOT)
-    config["simplefold_env"] = {
-        "PYTHONPATH": str(SIMPLEFOLD_ROOT / "src"),
-        "MPLCONFIGDIR": str(workspace_dir / "mplconfig"),
-    }
-    uploaded_ckpt_dir, uploaded_ckpt_note = resolve_uploaded_ckpt_dir(
-        submission_dir=submission_dir,
-        workspace_dir=workspace_dir,
-        model_name=model_name,
-    )
-    using_uploaded_checkpoint = uploaded_ckpt_dir is not None
-    config["ckpt_dir"] = str(uploaded_ckpt_dir or (bundle_dir / "checkpoints"))
-    config["simplefold_cache_seed_dir"] = str(CACHE_SEED_ROOT)
-    config_path = workspace_dir / "runtime_config.json"
-    config_path.write_text(json.dumps(config, indent=2))
-    LOGGER.info("runtime config built config_path=%s config=%s", config_path, config)
-    checkpoint_note = (
-        f"using {uploaded_ckpt_note} for model {model_name}"
-        if using_uploaded_checkpoint
-        else f"using bundled checkpoint {model_name}.ckpt"
-    )
-    return config_path, checkpoint_note
-
-
-def _load_runtime_config(config_path: Path) -> dict:
-    return json.loads(config_path.read_text())
-
-
-def _resolve_hidden_ckpt_dir(
-    *,
-    workspace_dir: Path,
-    output_dir: Path,
-    model_name: str,
-    fallback_ckpt_dir: Path,
-) -> Path:
-    output_ckpt_dir = output_dir / "checkpoints"
-    named_ckpt = output_ckpt_dir / f"{model_name}.ckpt"
-    if named_ckpt.exists():
-        return output_ckpt_dir
-
-    adapted_ckpt = output_ckpt_dir / "adapted.ckpt"
-    if adapted_ckpt.exists():
-        hidden_ckpt_dir = workspace_dir / "hidden_checkpoints"
-        hidden_ckpt_dir.mkdir(parents=True, exist_ok=True)
-        copyfile(adapted_ckpt, hidden_ckpt_dir / f"{model_name}.ckpt")
-        return hidden_ckpt_dir
-
-    return fallback_ckpt_dir
-
-
-def run_hidden_test_inference(
-    *,
-    workspace_dir: Path,
-    output_dir: Path,
-    runtime_config: dict,
-    submission_log_path: Path | None,
+    cwd: Path,
     cancel_event: Event | None,
-) -> dict:
-    started = time.perf_counter()
-    hidden_output_dir = workspace_dir / "hidden_test_output"
-    hidden_output_dir.mkdir(parents=True, exist_ok=True)
-
-    model_name = str(runtime_config.get("simplefold_model", "simplefold_100M"))
-    hidden_ckpt_dir = _resolve_hidden_ckpt_dir(
-        workspace_dir=workspace_dir,
-        output_dir=output_dir,
-        model_name=model_name,
-        fallback_ckpt_dir=BUNDLE_ROOT / "checkpoints",
-    )
-
-    hidden_config = dict(runtime_config)
-    hidden_config["ckpt_dir"] = str(hidden_ckpt_dir)
-
-    args = [
-        *cached_runner_command(hidden_config),
-        "--manifest_path",
-        str(BUNDLE_ROOT / "test" / "manifest.json"),
-        "--split_dir",
-        str(BUNDLE_ROOT / "test"),
-        "--simplefold_model",
-        model_name,
-        "--num_steps",
-        str(int(hidden_config.get("num_steps", 500))),
-        "--tau",
-        str(hidden_config.get("tau", 0.01)),
-        "--nsample_per_protein",
-        "1",
-        "--ckpt_dir",
-        str(hidden_ckpt_dir),
-        "--output_dir",
-        str(hidden_output_dir),
-        "--backend",
-        "torch",
-    ]
-    if bool(hidden_config.get("plddt", False)):
-        args.append("--plddt")
-
+    submission_log_path: Path | None,
+    process_started: Callable[[subprocess.Popen[str]], None] | None = None,
+    label: str = "process",
+) -> tuple[str, int]:
     env = os.environ.copy()
-    env.update({str(key): str(value) for key, value in (hidden_config.get("simplefold_env") or {}).items()})
+    env["PYTHONPATH"] = str(NANOFOLD_REPO)
+    env["PYTHONUNBUFFERED"] = "1"
 
-    LOGGER.info("starting hidden test inference command=%s", args)
     process = subprocess.Popen(
         args,
-        cwd=str(hidden_config.get("simplefold_workdir") or SIMPLEFOLD_ROOT),
+        cwd=str(cwd),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -260,46 +127,108 @@ def run_hidden_test_inference(
         start_new_session=True,
         env=env,
     )
-    hidden_lines: list[str] = []
+    if process_started is not None:
+        process_started(process)
+
+    lines: list[str] = []
     assert process.stdout is not None
     for line in process.stdout:
         if cancel_event and cancel_event.is_set():
-            LOGGER.info("hidden inference cancellation requested pid=%s", process.pid)
+            LOGGER.info("%s cancellation requested pid=%s", label, process.pid)
             terminate_process_tree(process)
         stripped = line.rstrip()
-        hidden_lines.append(line)
-        if submission_log_path and should_record_submission_progress(stripped):
-            append_submission_progress(
-                submission_log_path,
-                stripped.removeprefix("[progress] ").strip(),
-            )
-        LOGGER.info("hidden inference stream %s", stripped)
+        lines.append(line)
+        if submission_log_path and stripped.startswith("[progress]"):
+            append_submission_progress(submission_log_path, stripped.removeprefix("[progress]").strip())
+        LOGGER.info("%s stream %s", label, stripped)
+
     returncode = process.wait()
-    combined_output = "".join(hidden_lines)
+    return "".join(lines), returncode
+
+
+def _find_checkpoints(run_name: str) -> list[Path]:
+    ckpt_dir = NANOFOLD_REPO / "runs" / run_name / "checkpoints"
+    if not ckpt_dir.exists():
+        return []
+    ckpts = sorted(ckpt_dir.glob("ckpt_step_*.pt"), key=lambda p: int(p.stem.split("_")[-1]))
+    last = ckpt_dir / "ckpt_last.pt"
+    if last.exists() and last not in ckpts:
+        ckpts.append(last)
+    return ckpts
+
+
+def _run_eval(
+    *,
+    config_path: Path,
+    run_name: str,
+    split: str,
+    workspace_dir: Path,
+    features_dir: Path | str,
+    labels_dir: Path | str,
+    manifest: str,
+    cancel_event: Event | None,
+    submission_log_path: Path | None,
+) -> Path:
+    ckpts = _find_checkpoints(run_name)
+    if not ckpts:
+        raise RuntimeError(f"no checkpoints found for run_name={run_name}")
+
+    predict_out = workspace_dir / f"predict_summary_{split}.json"
+    args = [
+        str(NANOFOLD_PYTHON),
+        str(NANOFOLD_REPO / "eval.py"),
+        "--config", str(config_path),
+        "--ckpt-list", ",".join(str(c) for c in ckpts),
+        "--split", split,
+        "--features-dir", str(features_dir),
+        "--labels-dir", str(labels_dir),
+        "--save", str(predict_out),
+    ]
+    if manifest:
+        args += ["--manifest", manifest]
+    LOGGER.info("starting eval command=%s", args)
+    stdout, returncode = _stream_process(
+        args,
+        cwd=NANOFOLD_REPO,
+        cancel_event=cancel_event,
+        submission_log_path=submission_log_path,
+        label=f"eval_{split}",
+    )
     if returncode != 0:
-        raise RuntimeError(
-            "hidden test inference failed\n"
-            f"stdout:\n{combined_output}\n"
-        )
+        raise RuntimeError(f"eval.py failed for split={split}\nstdout:\n{stdout}")
+    return predict_out
 
-    prediction_root = hidden_output_dir / f"predictions_{model_name}"
-    normalized_prediction_dir = hidden_output_dir / "predictions"
-    normalized_prediction_dir.mkdir(parents=True, exist_ok=True)
-    for sample in json.loads((BUNDLE_ROOT / "test" / "manifest.json").read_text()).get("samples", []):
-        target_id = sample["target_id"]
-        source = prediction_root / f"{target_id.lower()}_sampled_0.cif"
-        if not source.exists():
-            source = prediction_root / f"{target_id}_sampled_0.cif"
-        if not source.exists():
-            raise RuntimeError(f"hidden test inference produced no CIF output for {target_id}")
-        copyfile(source, normalized_prediction_dir / f"{target_id}_sampled_0.cif")
 
-    scoring = score_split(BUNDLE_ROOT / "test" / "manifest.json", normalized_prediction_dir)
-    return {
-        "scoring": scoring,
-        "stdout": combined_output,
-        "runtime_sec": time.perf_counter() - started,
-    }
+def _run_score(
+    *,
+    predict_summary: Path,
+    features_dir: Path | str,
+    labels_dir: Path | str,
+    workspace_dir: Path,
+    label: str,
+    cancel_event: Event | None,
+    submission_log_path: Path | None,
+) -> dict:
+    score_out = workspace_dir / f"score_{label}.json"
+    args = [
+        str(NANOFOLD_PYTHON),
+        str(NANOFOLD_REPO / "score.py"),
+        "--prediction-summary", str(predict_summary),
+        "--features-dir", str(features_dir),
+        "--labels-dir", str(labels_dir),
+        "--save", str(score_out),
+    ]
+    LOGGER.info("starting score command=%s", args)
+    stdout, returncode = _stream_process(
+        args,
+        cwd=NANOFOLD_REPO,
+        cancel_event=cancel_event,
+        submission_log_path=submission_log_path,
+        label=f"score_{label}",
+    )
+    if returncode != 0:
+        raise RuntimeError(f"score.py failed for {label}\nstdout:\n{stdout}")
+    return json.loads(score_out.read_text())
 
 
 def terminate_process_tree(process: subprocess.Popen[str]) -> None:
@@ -316,6 +245,7 @@ def terminate_process_tree(process: subprocess.Popen[str]) -> None:
 def run_uploaded_submission(
     upload_path: Path,
     *,
+    track: str = "limited",
     cancel_event: Event | None = None,
     process_started: Callable[[subprocess.Popen[str]], None] | None = None,
     submission_log_path: Path | None = None,
@@ -326,99 +256,104 @@ def run_uploaded_submission(
     if cancel_event and cancel_event.is_set():
         raise SubmissionCancelledError("submission cancelled before benchmark start")
 
-    with tempfile.TemporaryDirectory(prefix="sundai_live_eval_") as tmp_dir:
+    started = time.perf_counter()
+    run_name = upload_path.stem[:48].replace(" ", "_")
+    submission_dest: Path | None = None
+    combined_stdout = ""
+
+    with tempfile.TemporaryDirectory(prefix="nanofold_eval_") as tmp_dir:
         workspace_dir = Path(tmp_dir)
-        bundle_dir = workspace_dir / "input_bundle"
-        output_dir = workspace_dir / "output"
-        output_dir.mkdir(parents=True, exist_ok=True)
 
-        submission_path, uploaded_config_path, submission_dir = _extract_submission(upload_path, workspace_dir)
-        _build_bundle(bundle_dir)
-        config_path, checkpoint_note = _build_runtime_config(uploaded_config_path, workspace_dir, bundle_dir, submission_dir)
-        runtime_config = _load_runtime_config(config_path)
-        if submission_log_path:
-            append_submission_progress(submission_log_path, "starting run for train/val")
-            append_submission_progress(submission_log_path, checkpoint_note)
+        try:
+            extract_dir, _ = _extract_submission(upload_path, workspace_dir)
+            config_path = _build_patched_config(extract_dir, run_name, workspace_dir, track)
+            submission_dest = _place_submission(extract_dir, run_name)
 
-        command = [
-            sys.executable,
-            str(REPO_ROOT / "benchmark.py"),
-            "--input_dir",
-            str(bundle_dir),
-            "--output_dir",
-            str(output_dir),
-            "--submission",
-            str(submission_path),
-            "--config",
-            str(config_path),
-            "--skip_scoring",
-            "--timeout_sec",
-            "1800",
-        ]
-        LOGGER.info(
-            "starting live benchmark upload_path=%s workspace_dir=%s command=%s",
-            upload_path,
-            workspace_dir,
-            command,
-        )
-        process = subprocess.Popen(
-            command,
-            cwd=REPO_ROOT,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            start_new_session=True,
-        )
-        if process_started is not None:
-            process_started(process)
-        output_lines: list[str] = []
-        assert process.stdout is not None
-        for line in process.stdout:
-            if cancel_event and cancel_event.is_set():
-                LOGGER.info("benchmark cancellation requested pid=%s", process.pid)
-                terminate_process_tree(process)
-            stripped = line.rstrip()
-            output_lines.append(line)
-            if submission_log_path and should_record_submission_progress(stripped):
-                append_submission_progress(
-                    submission_log_path,
-                    stripped.removeprefix("[progress] ").strip(),
-                )
-            LOGGER.info("benchmark stream %s", stripped)
-        returncode = process.wait()
-        combined_output = "".join(output_lines)
-        if cancel_event and cancel_event.is_set():
-            raise SubmissionCancelledError("submission cancelled during benchmark execution")
+            if submission_log_path:
+                append_submission_progress(submission_log_path, f"starting training track={track}")
 
-        results_path = output_dir / "results.json"
-        if not results_path.exists():
-            raise RuntimeError(
-                "benchmark did not produce results.json\n"
-                f"stdout:\n{combined_output}\n\nstderr:\n"
-            )
-        results = json.loads(results_path.read_text())
-        validation = results.get("validation") or {}
-        if results.get("error") is None and validation.get("valid"):
-            hidden_result = run_hidden_test_inference(
-                workspace_dir=workspace_dir,
-                output_dir=output_dir,
-                runtime_config=runtime_config,
-                submission_log_path=submission_log_path,
+            train_stdout, train_rc = _stream_process(
+                [str(NANOFOLD_PYTHON), str(NANOFOLD_REPO / "train.py"), "--config", str(config_path), "--track", track, "--official"],
+                cwd=NANOFOLD_REPO,
                 cancel_event=cancel_event,
+                submission_log_path=submission_log_path,
+                process_started=process_started,
+                label="train",
             )
-            results["scoring"] = hidden_result["scoring"]
-            results["valid"] = bool(hidden_result["scoring"]["valid"])
-            combined_output = combined_output + hidden_result["stdout"]
-            results["runtime_sec"] = float(results.get("runtime_sec") or 0.0) + float(hidden_result["runtime_sec"])
-        results["stdout"] = combined_output
-        results["stderr"] = ""
-        results["returncode"] = returncode
-        LOGGER.info(
-            "live benchmark finished returncode=%s valid=%s runtime_sec=%s error=%s",
-            returncode,
-            results.get("valid"),
-            results.get("runtime_sec"),
-            results.get("error"),
-        )
-        return results
+            combined_stdout += train_stdout
+            if train_rc != 0:
+                return {"valid": False, "error": f"train.py failed (rc={train_rc})", "runtime_sec": time.perf_counter() - started, "stdout": combined_stdout}
+
+            if cancel_event and cancel_event.is_set():
+                raise SubmissionCancelledError("submission cancelled after training")
+
+            if submission_log_path:
+                append_submission_progress(submission_log_path, "training complete — evaluating on public val")
+
+            predict_val = _run_eval(
+                config_path=config_path,
+                run_name=run_name,
+                split="val",
+                workspace_dir=workspace_dir,
+                features_dir=NANOFOLD_FEATURES_DIR,
+                labels_dir=NANOFOLD_LABELS_DIR,
+                manifest="",
+                cancel_event=cancel_event,
+                submission_log_path=submission_log_path,
+            )
+            public_score = _run_score(
+                predict_summary=predict_val,
+                features_dir=NANOFOLD_FEATURES_DIR,
+                labels_dir=NANOFOLD_LABELS_DIR,
+                workspace_dir=workspace_dir,
+                label="val",
+                cancel_event=cancel_event,
+                submission_log_path=submission_log_path,
+            )
+
+            hidden_score: dict | None = None
+            if hidden_assets_available() and not (cancel_event and cancel_event.is_set()):
+                if submission_log_path:
+                    append_submission_progress(submission_log_path, "evaluating on hidden val")
+                try:
+                    predict_hidden = _run_eval(
+                        config_path=config_path,
+                        run_name=run_name,
+                        split="hidden_val",
+                        workspace_dir=workspace_dir,
+                        features_dir=NANOFOLD_HIDDEN_FEATURES_DIR,
+                        labels_dir=NANOFOLD_HIDDEN_LABELS_DIR,
+                        manifest=NANOFOLD_HIDDEN_MANIFEST,
+                        cancel_event=cancel_event,
+                        submission_log_path=submission_log_path,
+                    )
+                    hidden_score = _run_score(
+                        predict_summary=predict_hidden,
+                        features_dir=NANOFOLD_HIDDEN_FEATURES_DIR,
+                        labels_dir=NANOFOLD_HIDDEN_LABELS_DIR,
+                        workspace_dir=workspace_dir,
+                        label="hidden",
+                        cancel_event=cancel_event,
+                        submission_log_path=submission_log_path,
+                    )
+                except Exception as exc:
+                    LOGGER.warning("hidden scoring failed: %s", exc)
+
+            runtime_sec = time.perf_counter() - started
+            LOGGER.info("nanofold eval finished track=%s runtime_sec=%.1f", track, runtime_sec)
+            return {
+                "valid": True,
+                "runtime_sec": runtime_sec,
+                "track": track,
+                "public_score": public_score,
+                "hidden_score": hidden_score,
+                "stdout": combined_stdout,
+            }
+
+        finally:
+            if submission_dest and submission_dest.exists():
+                shutil.rmtree(submission_dest, ignore_errors=True)
+            run_dir = NANOFOLD_REPO / "runs" / run_name
+            if run_dir.exists():
+                shutil.rmtree(run_dir, ignore_errors=True)
+            LOGGER.info("cleaned up submission_dest and run_dir for run_name=%s", run_name)
