@@ -2,8 +2,6 @@
 
 `sundai-nanofold-bench` is the local service and submission scaffold for the Sundai nanoFold leaderboard. It provides the FastAPI service, static leaderboard UI, Docker worker flow, scorer integration, and example submission wiring used to run and evaluate competition submissions.
 
-This repository intentionally does not vendor the competition dataset. The old `data/simplefold_hackathon_v1` and `data/public_lb_v1` bundles have been removed because this benchmark now uses the official nanoFold competition data instead.
-
 ## Data Source
 
 Use the official nanoFold competition repository for data, manifests, preprocessing, and participant-facing training instructions:
