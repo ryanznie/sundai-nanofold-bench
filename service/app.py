@@ -14,7 +14,7 @@ from time import sleep
 from zipfile import BadZipFile, ZipFile
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -45,6 +45,7 @@ LOG_ROOT = env_path("SUNDAI_LOG_ROOT", str(Path(__file__).with_name("logs")))
 JOB_STATE_LOCK = threading.Lock()
 JOB_CANCEL_EVENTS: dict[str, threading.Event] = {}
 JOB_PROCESSES: dict[str, subprocess.Popen[str]] = {}
+JOB_SEMAPHORE = threading.Semaphore(1)
 MAX_UPLOADED_CHECKPOINT_BYTES = 500 * 1024 * 1024
 
 
@@ -83,6 +84,21 @@ def init_db() -> None:
         for col in ("original_filename", "config_json", "description", "track"):
             if col not in existing_columns:
                 connection.execute(f"alter table submissions add column {col} text")
+        scores_columns = {
+            row["name"]
+            for row in connection.execute("pragma table_info(scores)").fetchall()
+        }
+        for col, typedef in [
+            ("track", "text"),
+            ("foldscore_auc_hidden", "real"),
+            ("final_hidden_foldscore", "real"),
+            ("public_val_foldscore", "real"),
+            ("gdt_ha_ca_auc", "real"),
+            ("lddt_atom14_auc", "real"),
+            ("molprobity_clash_atom14_auc", "real"),
+        ]:
+            if col not in scores_columns:
+                connection.execute(f"alter table scores add column {col} {typedef}")
         connection.commit()
 
 
@@ -192,9 +208,9 @@ def persist_completion(submission_id: str, payload: SubmissionResult) -> None:
                 """
                 insert into scores(
                     submission_id, track, foldscore_auc_hidden, final_hidden_foldscore,
-                    public_val_foldscore, gdt_ha_ca_auc, lddt_atom14_auc,
+                    public_val_foldscore, gdt_ha_ca_auc, lddt_atom14_auc, molprobity_clash_atom14_auc,
                     total_runtime_sec, raw_summary_json
-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 on conflict(submission_id) do update set
                     track=excluded.track,
                     foldscore_auc_hidden=excluded.foldscore_auc_hidden,
@@ -202,6 +218,7 @@ def persist_completion(submission_id: str, payload: SubmissionResult) -> None:
                     public_val_foldscore=excluded.public_val_foldscore,
                     gdt_ha_ca_auc=excluded.gdt_ha_ca_auc,
                     lddt_atom14_auc=excluded.lddt_atom14_auc,
+                    molprobity_clash_atom14_auc=excluded.molprobity_clash_atom14_auc,
                     total_runtime_sec=excluded.total_runtime_sec,
                     raw_summary_json=excluded.raw_summary_json
                 """,
@@ -213,6 +230,7 @@ def persist_completion(submission_id: str, payload: SubmissionResult) -> None:
                     payload.summary.get("public_val_foldscore"),
                     payload.summary.get("gdt_ha_ca_auc"),
                     payload.summary.get("lddt_atom14_auc"),
+                    payload.summary.get("molprobity_clash_atom14_auc"),
                     payload.runtime_sec,
                     json.dumps(payload.summary),
                 ),
@@ -240,11 +258,23 @@ def run_submission_job(submission_id: str, upload_path: Path) -> None:
         with JOB_STATE_LOCK:
             JOB_PROCESSES[submission_id] = process
 
-    try:
-        sleep(0.8)
+    # Wait for the exclusive run slot, checking for cancellation every second.
+    while not JOB_SEMAPHORE.acquire(timeout=1.0):
         if cancel_event.is_set():
             set_submission_status(submission_id, status="cancelled", valid=0, invalid_reason="cancelled by user")
+            append_submission_progress(log_path, "cancelled")
+            with JOB_STATE_LOCK:
+                JOB_CANCEL_EVENTS.pop(submission_id, None)
             return
+    if cancel_event.is_set():
+        JOB_SEMAPHORE.release()
+        set_submission_status(submission_id, status="cancelled", valid=0, invalid_reason="cancelled by user")
+        append_submission_progress(log_path, "cancelled")
+        with JOB_STATE_LOCK:
+            JOB_CANCEL_EVENTS.pop(submission_id, None)
+        return
+
+    try:
         set_submission_status(submission_id, status="running")
         with connect() as _conn:
             _sub = _conn.execute("select track from submissions where id = ?", (submission_id,)).fetchone()
@@ -261,11 +291,12 @@ def run_submission_job(submission_id: str, upload_path: Path) -> None:
         public = result.get("public_score") or {}
         summary = {
             "track": result.get("track", _track),
-            "foldscore_auc_hidden": hidden.get("foldscore_auc"),
-            "final_hidden_foldscore": hidden.get("foldscore"),
-            "public_val_foldscore": public.get("foldscore"),
-            "gdt_ha_ca_auc": hidden.get("gdt_ha_ca_auc"),
-            "lddt_atom14_auc": hidden.get("lddt_atom14_auc"),
+            "foldscore_auc_hidden": hidden.get("mean_foldscore") or public.get("mean_foldscore"),
+            "final_hidden_foldscore": hidden.get("mean_foldscore") or public.get("mean_foldscore"),
+            "public_val_foldscore": public.get("mean_foldscore"),
+            "gdt_ha_ca_auc": hidden.get("mean_gdt_ha_ca") or public.get("mean_gdt_ha_ca"),
+            "lddt_atom14_auc": hidden.get("mean_lddt_atom14") or public.get("mean_lddt_atom14"),
+            "molprobity_clash_atom14_auc": hidden.get("mean_molprobity_clash_atom14") or public.get("mean_molprobity_clash_atom14"),
             "public_score": public,
             "hidden_score": hidden,
         }
@@ -302,6 +333,7 @@ def run_submission_job(submission_id: str, upload_path: Path) -> None:
         )
         append_submission_progress(log_path, "failed")
     finally:
+        JOB_SEMAPHORE.release()
         with JOB_STATE_LOCK:
             JOB_PROCESSES.pop(submission_id, None)
             JOB_CANCEL_EVENTS.pop(submission_id, None)
@@ -369,6 +401,14 @@ def serve_index() -> str:
 @app.get("/favicon.ico", include_in_schema=False)
 def serve_favicon() -> RedirectResponse:
     return RedirectResponse(url="/static/favicon.svg")
+
+
+@app.get("/sample_submission.zip", include_in_schema=False)
+def download_sample() -> FileResponse:
+    path = Path("/tmp/sample_submission.zip")
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="sample submission not found")
+    return FileResponse(path, media_type="application/zip", filename="sample_submission.zip")
 
 
 @app.post("/submissions")
@@ -531,41 +571,46 @@ def leaderboard() -> dict:
     with connect() as connection:
         rows = connection.execute(
             """
-            with ranked as (
-                select
-                    teams.name as team_name,
-                    submissions.id as submission_id,
-                    submissions.status,
-                    submissions.valid,
-                    submissions.created_at,
-                    submissions.completed_at,
-                    submissions.description,
-                    coalesce(scores.track, submissions.track) as track,
-                    scores.foldscore_auc_hidden,
-                    scores.final_hidden_foldscore,
-                    scores.public_val_foldscore,
-                    scores.gdt_ha_ca_auc,
-                    scores.lddt_atom14_auc,
-                    scores.total_runtime_sec,
-                    row_number() over (
-                        partition by teams.id, coalesce(scores.track, submissions.track)
-                        order by
-                            coalesce(submissions.valid, 0) desc,
-                            scores.foldscore_auc_hidden desc nulls last,
-                            scores.total_runtime_sec asc
-                    ) as team_rank
-                from submissions
-                join teams on teams.id = submissions.team_id
-                join scores on scores.submission_id = submissions.id
-            )
-            select *
-            from ranked
-            where team_rank = 1
+            select
+                teams.name as team_name,
+                submissions.id as submission_id,
+                submissions.status,
+                submissions.valid,
+                submissions.created_at,
+                submissions.completed_at,
+                submissions.description,
+                coalesce(scores.track, submissions.track) as track,
+                scores.foldscore_auc_hidden,
+                scores.final_hidden_foldscore,
+                scores.public_val_foldscore,
+                scores.gdt_ha_ca_auc,
+                scores.lddt_atom14_auc,
+                scores.molprobity_clash_atom14_auc,
+                scores.total_runtime_sec
+            from submissions
+            join teams on teams.id = submissions.team_id
+            join scores on scores.submission_id = submissions.id
             order by
-                track asc,
-                coalesce(valid, 0) desc,
-                foldscore_auc_hidden desc nulls last,
-                total_runtime_sec asc
+                coalesce(submissions.valid, 0) desc,
+                coalesce(scores.foldscore_auc_hidden, scores.final_hidden_foldscore, scores.public_val_foldscore) desc nulls last,
+                scores.public_val_foldscore desc nulls last,
+                scores.total_runtime_sec asc
             """
         ).fetchall()
-    return {"rows": [dict(row) for row in rows]}
+    queue = connection.execute(
+            """
+            select
+                teams.name as team_name,
+                submissions.id as submission_id,
+                submissions.status,
+                submissions.created_at,
+                submissions.original_filename,
+                submissions.description,
+                coalesce(submissions.track, 'limited') as track
+            from submissions
+            join teams on teams.id = submissions.team_id
+            where submissions.status in ('queued', 'running')
+            order by submissions.created_at asc
+            """
+        ).fetchall()
+    return {"rows": [dict(row) for row in rows], "queue": [dict(row) for row in queue]}

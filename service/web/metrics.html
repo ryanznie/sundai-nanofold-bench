@@ -30,6 +30,7 @@
       html, body {
         margin: 0;
         min-height: 100%;
+        zoom: 0.75;
         background:
           linear-gradient(transparent 23px, rgba(255, 255, 255, 0.02) 24px),
           linear-gradient(90deg, transparent 23px, rgba(255, 255, 255, 0.02) 24px),
@@ -40,7 +41,7 @@
         color: var(--text);
       }
 
-      body { font-family: var(--body-font); }
+      body { font-family: var(--body-font); zoom: 0.8; }
       button, input, code { font: inherit; }
       button, input { border-radius: 0; }
 
@@ -266,10 +267,10 @@
     <div class="shell">
       <aside class="rail">
         <div class="rail-top">
-          <p class="kicker">Protein Folding Bench</p>
-          <h1>Sundai SimpleFold</h1>
+          <p class="kicker">NanoFold Competition</p>
+          <h1>Sundai NanoFold</h1>
           <p class="lead">
-            Public ranking and structure-quality inspection.
+            Data-efficiency leaderboard for protein structure prediction.
           </p>
         </div>
 
@@ -317,29 +318,39 @@
               </thead>
               <tbody>
                 <tr>
-                  <td><strong>TM-score</strong></td>
+                  <td><strong>FoldScore</strong></td>
                   <td>0.0 &rarr; 1.0</td>
-                  <td>Template Modeling score. Higher is better. Scores &gt; 0.5 generally indicate a correct global fold.</td>
+                  <td>Composite ranking metric: 0.5 &times; GDT-HA + 0.3 &times; lDDT-atom14 + 0.2 &times; MolProbity. Higher is better. This is the primary leaderboard metric.</td>
                 </tr>
                 <tr>
-                  <td><strong>GDT-TS</strong></td>
+                  <td><strong>GDT-HA</strong></td>
                   <td>0.0 &rarr; 1.0</td>
-                  <td>Global Distance Test Total Score. Measures the percentage of C-alpha atoms within 1Å, 2Å, 4Å, and 8Å of the reference structure. Higher is better.</td>
+                  <td>Global Distance Test High Accuracy. Measures the fraction of C-alpha atoms superimposed within 0.5&Aring;, 1&Aring;, 2&Aring;, and 4&Aring; of the reference. The CASP gold-standard for global fold quality. Weight: 0.5.</td>
                 </tr>
                 <tr>
-                  <td><strong>lDDT</strong></td>
+                  <td><strong>lDDT-atom14</strong></td>
                   <td>0.0 &rarr; 1.0</td>
-                  <td>Local Distance Difference Test. Measures local structure consistency. Scores &gt; 0.7 indicate high confidence.</td>
+                  <td>Local Distance Difference Test computed over all heavy atoms (atom14 representation). Measures preservation of local inter-atomic distances within a 15&Aring; neighbourhood. AlphaFold&rsquo;s primary confidence metric. Weight: 0.3.</td>
                 </tr>
                 <tr>
-                  <td><strong>CA-RMSD</strong></td>
-                  <td>&Aring; (Angstroms)</td>
-                  <td>Root Mean Square Deviation of C-alpha atoms. Lower is better. &lt; 2.0&Aring; is high accuracy.</td>
+                  <td><strong>MolProbity Clash</strong></td>
+                  <td>0.0 &rarr; 1.0</td>
+                  <td>Physical clash score derived from MolProbity. Penalises steric clashes between non-bonded atoms. 1.0 means no clashes; lower values indicate physically implausible structures. Weight: 0.2.</td>
+                </tr>
+                <tr>
+                  <td><strong>GDT-TS</strong> <span style="font-size:0.8em;color:var(--muted)">(diagnostic)</span></td>
+                  <td>0.0 &rarr; 1.0</td>
+                  <td>Global Distance Test Total Score. Thresholds 1&Aring;, 2&Aring;, 4&Aring;, 8&Aring; on C-alpha atoms. Reported for reference but not included in FoldScore.</td>
+                </tr>
+                <tr>
+                  <td><strong>lDDT-CA</strong> <span style="font-size:0.8em;color:var(--muted)">(diagnostic)</span></td>
+                  <td>0.0 &rarr; 1.0</td>
+                  <td>lDDT computed on C-alpha atoms only. Faster to compute than lDDT-atom14; reported for monitoring but not included in FoldScore.</td>
                 </tr>
                 <tr>
                   <td><strong>Runtime</strong></td>
                   <td>Seconds</td>
-                  <td>Total time taken for inference across all targets in the benchmark bundle.</td>
+                  <td>Total wall-clock time for inference across all targets in the benchmark bundle. Not part of FoldScore; shown for efficiency comparison.</td>
                 </tr>
               </tbody>
             </table>

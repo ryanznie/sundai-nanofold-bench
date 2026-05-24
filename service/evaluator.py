@@ -36,13 +36,11 @@ class SubmissionCancelledError(RuntimeError):
 
 def evaluator_assets_ready() -> tuple[bool, list[str]]:
     required = [
-        NANOFOLD_REPO / "train.py",
-        NANOFOLD_REPO / "eval.py",
+        NANOFOLD_REPO / "predict.py",
         NANOFOLD_REPO / "score.py",
         NANOFOLD_FEATURES_DIR,
         NANOFOLD_LABELS_DIR,
-        NANOFOLD_REPO / "data" / "manifests" / "train.txt",
-        NANOFOLD_REPO / "data" / "manifests" / "val.txt",
+        NANOFOLD_REPO / "data" / "manifests" / "val_100.txt",
     ]
     missing = [str(p) for p in required if not Path(p).exists()]
     LOGGER.info(
@@ -74,7 +72,17 @@ def _extract_submission(upload_path: Path, workspace_dir: Path) -> tuple[Path, P
     return extract_dir, config_path
 
 
-def _build_patched_config(extract_dir: Path, run_name: str, workspace_dir: Path, track: str) -> Path:
+def _build_patched_config(
+    extract_dir: Path,
+    run_name: str,
+    output_dir: Path,
+    track: str,
+    *,
+    features_dir: Path | str | None = None,
+    labels_dir: Path | str | None = None,
+    val_manifest_override: str = "",
+    suffix: str = "",
+) -> Path:
     raw_config = extract_dir / "config.yaml"
     with raw_config.open("r") as f:
         config = yaml.safe_load(f) or {}
@@ -82,12 +90,12 @@ def _build_patched_config(extract_dir: Path, run_name: str, workspace_dir: Path,
     config["run_name"] = run_name
     config["track"] = track
     config.setdefault("data", {})
-    config["data"]["processed_features_dir"] = str(NANOFOLD_FEATURES_DIR)
-    config["data"]["processed_labels_dir"] = str(NANOFOLD_LABELS_DIR)
+    config["data"]["processed_features_dir"] = str(features_dir or NANOFOLD_FEATURES_DIR)
+    config["data"]["processed_labels_dir"] = str(labels_dir or NANOFOLD_LABELS_DIR)
     config["data"]["train_manifest"] = str(NANOFOLD_REPO / "data" / "manifests" / "train.txt")
-    config["data"]["val_manifest"] = str(NANOFOLD_REPO / "data" / "manifests" / "val.txt")
+    config["data"]["val_manifest"] = val_manifest_override or str(NANOFOLD_REPO / "data" / "manifests" / "val_100.txt")
 
-    patched_path = workspace_dir / "runtime_config.yaml"
+    patched_path = output_dir / f"runtime_config{suffix}.yaml"
     with patched_path.open("w") as f:
         yaml.dump(config, f, default_flow_style=False)
 
@@ -146,56 +154,52 @@ def _stream_process(
     return "".join(lines), returncode
 
 
-def _find_checkpoints(run_name: str) -> list[Path]:
-    ckpt_dir = NANOFOLD_REPO / "runs" / run_name / "checkpoints"
+def _find_submission_checkpoints(submission_dest: Path) -> list[Path]:
+    ckpt_dir = submission_dest / "checkpoints"
     if not ckpt_dir.exists():
         return []
     ckpts = sorted(ckpt_dir.glob("ckpt_step_*.pt"), key=lambda p: int(p.stem.split("_")[-1]))
-    last = ckpt_dir / "ckpt_last.pt"
-    if last.exists() and last not in ckpts:
-        ckpts.append(last)
+    if not ckpts:
+        last = ckpt_dir / "ckpt_last.pt"
+        if last.exists():
+            ckpts = [last]
     return ckpts
 
 
 def _run_eval(
     *,
     config_path: Path,
-    run_name: str,
+    ckpts: list[Path],
     split: str,
     workspace_dir: Path,
-    features_dir: Path | str,
-    labels_dir: Path | str,
-    manifest: str,
     cancel_event: Event | None,
     submission_log_path: Path | None,
 ) -> Path:
-    ckpts = _find_checkpoints(run_name)
     if not ckpts:
-        raise RuntimeError(f"no checkpoints found for run_name={run_name}")
+        raise RuntimeError("no checkpoints provided for eval")
 
+    pred_out_dir = workspace_dir / f"pred_{split}"
+    pred_out_dir.mkdir(parents=True, exist_ok=True)
     predict_out = workspace_dir / f"predict_summary_{split}.json"
     args = [
         str(NANOFOLD_PYTHON),
-        str(NANOFOLD_REPO / "eval.py"),
+        str(NANOFOLD_REPO / "predict.py"),
         "--config", str(config_path),
         "--ckpt-list", ",".join(str(c) for c in ckpts),
         "--split", split,
-        "--features-dir", str(features_dir),
-        "--labels-dir", str(labels_dir),
+        "--pred-out-dir", str(pred_out_dir),
         "--save", str(predict_out),
     ]
-    if manifest:
-        args += ["--manifest", manifest]
-    LOGGER.info("starting eval command=%s", args)
+    LOGGER.info("starting predict command=%s", args)
     stdout, returncode = _stream_process(
         args,
         cwd=NANOFOLD_REPO,
         cancel_event=cancel_event,
         submission_log_path=submission_log_path,
-        label=f"eval_{split}",
+        label=f"predict_{split}",
     )
     if returncode != 0:
-        raise RuntimeError(f"eval.py failed for split={split}\nstdout:\n{stdout}")
+        raise RuntimeError(f"predict.py failed for split={split}\nstdout:\n{stdout}")
     return predict_out
 
 
@@ -247,7 +251,7 @@ def run_uploaded_submission(
     *,
     track: str = "limited",
     cancel_event: Event | None = None,
-    process_started: Callable[[subprocess.Popen[str]], None] | None = None,
+    process_started: Callable[[subprocess.Popen[str]], None] | None = None,  # kept for API compat
     submission_log_path: Path | None = None,
 ) -> dict:
     ready, missing = evaluator_assets_ready()
@@ -259,45 +263,53 @@ def run_uploaded_submission(
     started = time.perf_counter()
     run_name = upload_path.stem[:48].replace(" ", "_")
     submission_dest: Path | None = None
-    combined_stdout = ""
 
     with tempfile.TemporaryDirectory(prefix="nanofold_eval_") as tmp_dir:
         workspace_dir = Path(tmp_dir)
 
         try:
             extract_dir, _ = _extract_submission(upload_path, workspace_dir)
-            config_path = _build_patched_config(extract_dir, run_name, workspace_dir, track)
+            # Place submission first so configs can be written into the same directory as
+            # submission.py — predict.py enforces allowed_root=config.parent.
             submission_dest = _place_submission(extract_dir, run_name)
 
-            if submission_log_path:
-                append_submission_progress(submission_log_path, f"starting training track={track}")
+            ckpts = _find_submission_checkpoints(submission_dest)
+            if not ckpts:
+                return {
+                    "valid": False,
+                    "error": "no checkpoints found in submission (expected checkpoints/ckpt_*.pt)",
+                    "runtime_sec": time.perf_counter() - started,
+                }
+            # Use only the last (highest-step) checkpoint for scoring.
+            last_ckpt = [ckpts[-1]]
+            LOGGER.info("using checkpoint %s for eval", last_ckpt[0])
 
-            train_stdout, train_rc = _stream_process(
-                [str(NANOFOLD_PYTHON), str(NANOFOLD_REPO / "train.py"), "--config", str(config_path), "--track", track, "--official"],
-                cwd=NANOFOLD_REPO,
-                cancel_event=cancel_event,
-                submission_log_path=submission_log_path,
-                process_started=process_started,
-                label="train",
+            config_path = _build_patched_config(extract_dir, run_name, submission_dest, track)
+            # For hidden eval, override val_manifest so predict.py reads the hidden proteins
+            # without using split="hidden_val" (which triggers AUC-curve validation in score.py).
+            hidden_config_path = (
+                _build_patched_config(
+                    extract_dir, run_name, submission_dest, track,
+                    features_dir=NANOFOLD_HIDDEN_FEATURES_DIR,
+                    labels_dir=NANOFOLD_HIDDEN_LABELS_DIR,
+                    val_manifest_override=NANOFOLD_HIDDEN_MANIFEST,
+                    suffix="_hidden",
+                )
+                if hidden_assets_available()
+                else None
             )
-            combined_stdout += train_stdout
-            if train_rc != 0:
-                return {"valid": False, "error": f"train.py failed (rc={train_rc})", "runtime_sec": time.perf_counter() - started, "stdout": combined_stdout}
 
             if cancel_event and cancel_event.is_set():
-                raise SubmissionCancelledError("submission cancelled after training")
+                raise SubmissionCancelledError("submission cancelled before inference")
 
             if submission_log_path:
-                append_submission_progress(submission_log_path, "training complete — evaluating on public val")
+                append_submission_progress(submission_log_path, "running inference on public val")
 
             predict_val = _run_eval(
                 config_path=config_path,
-                run_name=run_name,
+                ckpts=last_ckpt,
                 split="val",
                 workspace_dir=workspace_dir,
-                features_dir=NANOFOLD_FEATURES_DIR,
-                labels_dir=NANOFOLD_LABELS_DIR,
-                manifest="",
                 cancel_event=cancel_event,
                 submission_log_path=submission_log_path,
             )
@@ -314,16 +326,13 @@ def run_uploaded_submission(
             hidden_score: dict | None = None
             if hidden_assets_available() and not (cancel_event and cancel_event.is_set()):
                 if submission_log_path:
-                    append_submission_progress(submission_log_path, "evaluating on hidden val")
+                    append_submission_progress(submission_log_path, "running inference on hidden test")
                 try:
                     predict_hidden = _run_eval(
-                        config_path=config_path,
-                        run_name=run_name,
-                        split="hidden_val",
+                        config_path=hidden_config_path,
+                        ckpts=last_ckpt,
+                        split="val",
                         workspace_dir=workspace_dir,
-                        features_dir=NANOFOLD_HIDDEN_FEATURES_DIR,
-                        labels_dir=NANOFOLD_HIDDEN_LABELS_DIR,
-                        manifest=NANOFOLD_HIDDEN_MANIFEST,
                         cancel_event=cancel_event,
                         submission_log_path=submission_log_path,
                     )
@@ -347,13 +356,9 @@ def run_uploaded_submission(
                 "track": track,
                 "public_score": public_score,
                 "hidden_score": hidden_score,
-                "stdout": combined_stdout,
             }
 
         finally:
             if submission_dest and submission_dest.exists():
                 shutil.rmtree(submission_dest, ignore_errors=True)
-            run_dir = NANOFOLD_REPO / "runs" / run_name
-            if run_dir.exists():
-                shutil.rmtree(run_dir, ignore_errors=True)
-            LOGGER.info("cleaned up submission_dest and run_dir for run_name=%s", run_name)
+            LOGGER.info("cleaned up submission_dest for run_name=%s", run_name)

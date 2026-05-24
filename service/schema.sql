@@ -38,8 +38,15 @@ create table if not exists scores (
     public_val_foldscore real,
     gdt_ha_ca_auc real,
     lddt_atom14_auc real,
+    molprobity_clash_atom14_auc real,
     total_runtime_sec real,
     raw_summary_json text
+);
+
+create table if not exists submission_targets (
+    submission_id text not null references submissions(id),
+    target_id text not null,
+    primary key (submission_id, target_id)
 );
 
 create index if not exists idx_submissions_team_created_at on submissions(team_id, created_at desc);

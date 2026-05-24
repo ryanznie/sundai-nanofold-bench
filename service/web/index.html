@@ -30,6 +30,7 @@
       html, body {
         margin: 0;
         min-height: 100%;
+        zoom: 0.75;
         background:
           linear-gradient(transparent 23px, rgba(255, 255, 255, 0.02) 24px),
           linear-gradient(90deg, transparent 23px, rgba(255, 255, 255, 0.02) 24px),
@@ -40,7 +41,7 @@
         color: var(--text);
       }
 
-      body { font-family: var(--body-font); }
+      body { font-family: var(--body-font); zoom: 0.8; }
       button, input, code { font: inherit; }
       button, input { border-radius: 0; }
 
@@ -556,12 +557,8 @@
               <div class="metric-value" id="teams-ranked">0</div>
             </div>
             <div class="metric">
-              <span class="metric-label">Best FoldScore AUC</span>
+              <span class="metric-label">Best FoldScore</span>
               <div class="metric-value" id="best-tm-score">-</div>
-            </div>
-            <div class="metric">
-              <span class="metric-label">Best Hidden FoldScore</span>
-              <div class="metric-value" id="fastest-runtime">-</div>
             </div>
           </div>
         </section>
@@ -575,18 +572,34 @@
               </div>
               <button class="button" id="refresh-button" type="button">Refresh</button>
             </div>
+
+            <div id="queue-section">
+              <div style="margin-bottom:10px;font-family:var(--mono-font);font-size:0.73rem;color:var(--warning);letter-spacing:0.08em;text-transform:uppercase;">Queue</div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Team</th>
+                    <th>Status</th>
+                    <th>Submitted</th>
+                    <th>Elapsed</th>
+                  </tr>
+                </thead>
+                <tbody id="queue-body"></tbody>
+              </table>
+              <div style="margin:16px 0;border-top:1px solid var(--line);"></div>
+            </div>
+
             <table>
               <thead>
                 <tr>
                   <th>#</th>
                   <th>Team</th>
-                  <th>Track</th>
                   <th>Status</th>
-                  <th>FoldScore AUC</th>
-                  <th>Hidden FoldScore</th>
-                  <th>Public FoldScore</th>
-                  <th>GDT-HA AUC</th>
-                  <th>lDDT AUC</th>
+                  <th>FoldScore</th>
+                  <th>GDT-HA</th>
+                  <th>lDDT-atom14</th>
+                  <th>MolProbity</th>
                   <th>Runtime</th>
                   <th>Completed</th>
                 </tr>
@@ -600,7 +613,7 @@
             <div class="section-head">
               <div>
                 <h3>Upload Submission</h3>
-                <p>Upload `submission.zip` with `submission.py` and `config.yaml` at root. Training runs on official data.</p>
+                <p>Upload a zip with <code>submission.py</code>, <code>config.yaml</code>, and <code>checkpoints/ckpt_last.pt</code>. Inference runs on official val + hidden test.</p>
               </div>
             </div>
             <form id="submission-form">
@@ -610,18 +623,11 @@
                 <label for="team_name">Team Name</label>
                 <input id="team_name" name="team_name" placeholder="Enter team name" autocomplete="off" required />
               </div>
-              <div class="field">
-                <label for="track">Track</label>
-                <select id="track" name="track" style="width:100%;border:1px solid var(--line-strong);background:var(--panel-soft);color:var(--text);padding:12px 13px;font:inherit;">
-                  <option value="limited">limited — 20k samples (main leaderboard)</option>
-                  <option value="research_large">research_large — 100k samples</option>
-                  <option value="unlimited">unlimited — no budget cap</option>
-                </select>
-              </div>
+              <input type="hidden" name="track" value="limited" />
               <div class="field">
                 <label for="baseline_submission_file">Submission Zip</label>
                 <input id="baseline_submission_file" name="file" type="file" accept=".zip" required />
-                <div class="file-note">Expected: `submission.zip` with `submission.py` and `config.yaml` at root.</div>
+                <div class="file-note">Required: <code>submission.py</code>, <code>config.yaml</code>, <code>checkpoints/ckpt_last.pt</code> (or <code>ckpt_step_*.pt</code>).</div>
               </div>
               <div class="actions">
                 <button class="button primary" type="submit" id="submit-button">Upload And Queue</button>
@@ -669,20 +675,20 @@
                   <div id="detail-track"></div>
                 </div>
                 <div>
-                  <div class="meta-label">FoldScore AUC</div>
-                  <div id="detail-tm-score"></div>
+                  <div class="meta-label">FoldScore</div>
+                  <div id="detail-foldscore-hidden"></div>
                 </div>
                 <div>
-                  <div class="meta-label">Hidden FoldScore</div>
-                  <div id="detail-gdt-ts"></div>
+                  <div class="meta-label">GDT-HA</div>
+                  <div id="detail-gdt-ha-hidden"></div>
                 </div>
                 <div>
-                  <div class="meta-label">Public FoldScore</div>
-                  <div id="detail-lddt"></div>
+                  <div class="meta-label">lDDT-atom14</div>
+                  <div id="detail-lddt-hidden"></div>
                 </div>
                 <div>
-                  <div class="meta-label">GDT-HA AUC</div>
-                  <div id="detail-ca-rmsd"></div>
+                  <div class="meta-label">MolProbity</div>
+                  <div id="detail-molprobity-hidden"></div>
                 </div>
                 <div>
                   <div class="meta-label">Submitted</div>
@@ -714,7 +720,7 @@
       const leaderboardEmpty = document.getElementById("leaderboard-empty");
       const teamsRanked = document.getElementById("teams-ranked");
       const bestTmScore = document.getElementById("best-tm-score");
-      const fastestRuntime = document.getElementById("fastest-runtime");
+
       const lastRefresh = document.getElementById("last-refresh");
       const submissionForm = document.getElementById("submission-form");
       const flash = document.getElementById("flash");
@@ -725,7 +731,7 @@
       let latestPollToken = 0;
 
       function formatNumber(value, digits = 3) {
-        if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
+        if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
         return Number(value).toFixed(digits);
       }
 
@@ -760,6 +766,55 @@
         return response.json();
       }
 
+      function formatElapsed(isoOrSqlTs) {
+        if (!isoOrSqlTs) return "-";
+        const ts = isoOrSqlTs.includes("T") ? isoOrSqlTs : isoOrSqlTs.replace(" ", "T") + "Z";
+        const secs = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+        if (secs < 0) return "0s";
+        const h = Math.floor(secs / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        const s = secs % 60;
+        if (h > 0) return `${h}h ${m}m ${s}s`;
+        if (m > 0) return `${m}m ${s}s`;
+        return `${s}s`;
+      }
+
+      let queueData = [];
+
+      function renderQueue(queue) {
+        queueData = queue || [];
+        const section = document.getElementById("queue-section");
+        const body = document.getElementById("queue-body");
+        body.innerHTML = "";
+        section.hidden = false;
+        if (queueData.length === 0) {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td colspan="5" class="microcopy" style="color:var(--muted);padding:10px 0;">No jobs in queue.</td>`;
+          body.appendChild(tr);
+          return;
+        }
+        queueData.forEach((row, index) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td class="rank">${index + 1}</td>
+            <td>
+              <div>${row.team_name}</div>
+              <div class="microcopy">${row.submission_id}</div>
+            </td>
+            <td><span class="status ${row.status}">${row.status}</span></td>
+            <td class="microcopy">${formatTimestamp(row.created_at)}</td>
+            <td class="microcopy queue-elapsed" data-created="${row.created_at}">${formatElapsed(row.created_at)}</td>
+          `;
+          body.appendChild(tr);
+        });
+      }
+
+      setInterval(() => {
+        document.querySelectorAll(".queue-elapsed").forEach((el) => {
+          el.textContent = formatElapsed(el.dataset.created);
+        });
+      }, 1000);
+
       function renderLeaderboard(rows) {
         leaderboardBody.innerHTML = "";
         leaderboardEmpty.hidden = rows.length !== 0;
@@ -767,6 +822,8 @@
         rows.forEach((row, index) => {
           const description = row.description || "";
           const shortDescription = truncateText(description, 90);
+          const hasScore = row.foldscore_auc_hidden !== null && row.foldscore_auc_hidden !== undefined;
+          const scoredClass = hasScore ? "" : "style=\"opacity:0.5\"";
           const tr = document.createElement("tr");
           tr.innerHTML = `
             <td class="rank">${index + 1}</td>
@@ -775,28 +832,26 @@
               <div class="microcopy clamped-text" title="${description.replace(/"/g, "&quot;")}">${shortDescription}</div>
               <div class="microcopy">${row.submission_id}</div>
             </td>
-            <td><span class="pill">${row.track || "-"}</span></td>
             <td><span class="status ${row.status}">${row.status}</span></td>
-            <td>${formatNumber(row.foldscore_auc_hidden)}</td>
-            <td>${formatNumber(row.final_hidden_foldscore)}</td>
-            <td>${formatNumber(row.public_val_foldscore)}</td>
-            <td>${formatNumber(row.gdt_ha_ca_auc)}</td>
-            <td>${formatNumber(row.lddt_atom14_auc)}</td>
+            <td ${scoredClass}>${formatNumber(row.foldscore_auc_hidden)}</td>
+            <td ${scoredClass}>${formatNumber(row.gdt_ha_ca_auc)}</td>
+            <td ${scoredClass}>${formatNumber(row.lddt_atom14_auc)}</td>
+            <td ${scoredClass}>${formatNumber(row.molprobity_clash_atom14_auc)}</td>
             <td>${formatRuntime(row.total_runtime_sec)}</td>
             <td>${formatTimestamp(row.completed_at || row.created_at)}</td>
           `;
           leaderboardBody.appendChild(tr);
         });
 
-        teamsRanked.textContent = String(rows.length);
-        bestTmScore.textContent = rows.length ? formatNumber(rows[0].foldscore_auc_hidden) : "-";
-        const hiddenScores = rows.map((row) => Number(row.final_hidden_foldscore)).filter((v) => Number.isFinite(v));
-        fastestRuntime.textContent = hiddenScores.length ? formatNumber(Math.max(...hiddenScores)) : "-";
+        const scoredRows = rows.filter((r) => r.foldscore_auc_hidden !== null && r.foldscore_auc_hidden !== undefined);
+        teamsRanked.textContent = `${rows.length} (${scoredRows.length} scored)`;
+        bestTmScore.textContent = scoredRows.length ? formatNumber(scoredRows[0].foldscore_auc_hidden) : "—";
         lastRefresh.textContent = `Last refresh: ${new Date().toLocaleTimeString()}`;
       }
 
       async function loadLeaderboard() {
         const payload = await fetchJson("/leaderboard");
+        renderQueue(payload.queue || []);
         renderLeaderboard(payload.rows || []);
       }
 
@@ -807,7 +862,10 @@
         submissionCard.hidden = false;
         document.getElementById("submission-id-line").textContent = submission.id || "-";
         const statusNode = document.getElementById("detail-status");
-        statusNode.textContent = submission.status || "-";
+        const statusText = submission.status === "failed" && submission.invalid_reason
+          ? `failed — ${submission.invalid_reason}`
+          : submission.status || "-";
+        statusNode.textContent = statusText;
         statusNode.className = `status ${submission.status || ""}`;
         
         const config = payload.submission_config || {};
@@ -820,10 +878,10 @@
         document.getElementById("detail-valid").textContent = submission.valid === 1 ? "true" : submission.valid === 0 ? "false" : "-";
         document.getElementById("detail-filename").textContent = submission.original_filename || "-";
         document.getElementById("detail-track").textContent = score.track || submission.track || "-";
-        document.getElementById("detail-tm-score").textContent = formatNumber(score.foldscore_auc_hidden);
-        document.getElementById("detail-gdt-ts").textContent = formatNumber(score.final_hidden_foldscore);
-        document.getElementById("detail-lddt").textContent = formatNumber(score.public_val_foldscore);
-        document.getElementById("detail-ca-rmsd").textContent = formatNumber(score.gdt_ha_ca_auc);
+        document.getElementById("detail-foldscore-hidden").textContent = formatNumber(score.foldscore_auc_hidden);
+        document.getElementById("detail-gdt-ha-hidden").textContent = formatNumber(score.gdt_ha_ca_auc);
+        document.getElementById("detail-lddt-hidden").textContent = formatNumber(score.lddt_atom14_auc);
+        document.getElementById("detail-molprobity-hidden").textContent = formatNumber(score.molprobity_clash_atom14_auc);
         document.getElementById("detail-created-at").textContent = formatTimestamp(submission.created_at);
         document.getElementById("detail-completed-at").textContent = formatTimestamp(submission.completed_at);
         document.getElementById("detail-config").textContent = payload.submission_config
@@ -971,6 +1029,11 @@
       Promise.all([
         loadLeaderboard(),
       ]).catch((error) => setFlash(error.message, "error"));
+
+      // Auto-refresh leaderboard every 30s
+      setInterval(() => {
+        loadLeaderboard().catch(() => {});
+      }, 30000);
     </script>
   </body>
 </html>

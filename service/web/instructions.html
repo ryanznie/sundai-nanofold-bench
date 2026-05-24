@@ -30,6 +30,7 @@
       html, body {
         margin: 0;
         min-height: 100%;
+        zoom: 0.75;
         background:
           linear-gradient(transparent 23px, rgba(255, 255, 255, 0.02) 24px),
           linear-gradient(90deg, transparent 23px, rgba(255, 255, 255, 0.02) 24px),
@@ -40,7 +41,7 @@
         color: var(--text);
       }
 
-      body { font-family: var(--body-font); }
+      body { font-family: var(--body-font); zoom: 0.8; }
       button, input, code { font: inherit; }
       button, input { border-radius: 0; }
 
@@ -257,10 +258,10 @@
     <div class="shell">
       <aside class="rail">
         <div class="rail-top">
-          <p class="kicker">Protein Folding Bench</p>
-          <h1>Sundai SimpleFold</h1>
+          <p class="kicker">NanoFold Competition</p>
+          <h1>Sundai NanoFold</h1>
           <p class="lead">
-            Public ranking and structure-quality inspection.
+            Data-efficiency leaderboard for protein structure prediction.
           </p>
         </div>
 
@@ -291,26 +292,69 @@
         <section class="content-grid">
           <div class="instruction-card">
             <div class="section-head">
-              <h3>Runtime Requirements</h3>
+              <h3>Zip Structure</h3>
+            </div>
+            <div class="instruction-content">
+              <p>Upload a <code>.zip</code> containing these files at the root level:</p>
+              <ul>
+                <li><code>submission.py</code> — your model entry point</li>
+                <li><code>config.yaml</code> — training and data configuration</li>
+                <li><code>checkpoints/ckpt_last.pt</code> — your trained checkpoint</li>
+              </ul>
+              <p style="margin-top:12px;color:var(--muted)">
+                Multiple step checkpoints are also accepted as <code>checkpoints/ckpt_step_&lt;N&gt;.pt</code>.
+                The evaluator will use the highest-step checkpoint for scoring.
+                Each checkpoint file must be under <strong>500 MB</strong>.
+              </p>
+            </div>
+          </div>
+
+          <div class="instruction-card">
+            <div class="section-head">
+              <h3>Evaluation Pipeline</h3>
             </div>
             <div class="instruction-content">
               <ul>
                 <li>
-                  <strong>Sampling Limit:</strong> Your <code>submission/config.json</code> must set <code>"nsample_per_protein": 1</code>. Submissions with multiple samples per target will be rejected or truncated.
+                  <strong>Predict:</strong> The service runs <code>predict.py</code> with your config against the official val set (100 proteins). Predictions are saved as <code>pred_atom14</code> arrays in npz format.
                 </li>
                 <li>
-                  <strong>Output Format:</strong> For every input <code>.fasta</code> in the evaluation bundle, your submission must produce exactly <strong>one</strong> CIF file at <code>/output/predictions/&lt;target_id&gt;_sampled_0.cif</code>.
+                  <strong>Score:</strong> <code>score.py</code> evaluates each prediction against ground-truth labels and computes GDT-HA, lDDT-atom14, MolProbity Clash, and the composite FoldScore.
                 </li>
                 <li>
-                  <strong>Local Dev vs. Production:</strong> While local development may use <code>MLX</code> for Apple Silicon, <strong>MLX is disabled</strong> during production benchmark runs. Ensure your <code>train.py</code> defaults to <code>torch</code> or handles backend selection gracefully.
-                </li>
-                <li>
-                  <strong>Bundle Structure:</strong> The uploaded <code>.zip</code> must contain a <code>submission/</code> folder with at least <code>train.py</code> and <code>config.json</code>. Optional checkpoints may be included under <code>submission/checkpoints/</code>, but each <code>.ckpt</code> file must be no larger than <code>500 MB</code>.
+                  <strong>Leaderboard:</strong> Your best FoldScore (AUC over training samples) is used for ranking. The detail panel shows all component scores.
                 </li>
               </ul>
+            </div>
+          </div>
 
+          <div class="instruction-card">
+            <div class="section-head">
+              <h3>Scoring Metric</h3>
+            </div>
+            <div class="instruction-content">
+              <p>Rankings use <strong>FoldScore</strong>, a weighted composite:</p>
+              <ul>
+                <li><strong>0.5 &times; GDT-HA</strong> — global fold accuracy (CASP standard)</li>
+                <li><strong>0.3 &times; lDDT-atom14</strong> — local all-atom distance accuracy</li>
+                <li><strong>0.2 &times; MolProbity Clash</strong> — physical validity (no steric clashes)</li>
+              </ul>
+              <p style="margin-top:12px;color:var(--muted)">All components are in [0, 1]; higher is better. See the <a href="/static/metrics.html" style="color:var(--accent-2)">Metrics page</a> for full definitions.</p>
+            </div>
+          </div>
+
+          <div class="instruction-card">
+            <div class="section-head">
+              <h3>Environment</h3>
+            </div>
+            <div class="instruction-content">
+              <ul>
+                <li>Runs on GPU (CUDA). Ensure your code does not hard-code CPU-only paths.</li>
+                <li>Network access is <strong>not</strong> available during evaluation — all weights must be in the zip.</li>
+                <li>The evaluation host has the <code>nanoFold-Competition</code> repo available at <code>/root/nanoFold-Competition</code>. Your <code>config.yaml</code> may reference it for shared utilities.</li>
+              </ul>
               <div class="warning-box">
-                <strong>Important:</strong> Submissions are executed in a network-isolated Docker environment with GPU access (CUDA). Verify your code runs locally using the provided <code>benchmark.sh</code> before uploading.
+                <strong>Tip:</strong> Test your zip locally by running <code>predict.py</code> with your config before uploading. A submission that fails predict will show as failed with no score.
               </div>
             </div>
           </div>
