@@ -1,115 +1,40 @@
-# Sundai Protein Folding Bench
+# Sundai NanoFold Bench
 
-`sundai-protein-folding-bench` is a Kaggle-style benchmark scaffold for
-budget-constrained SimpleFold adaptation and inference.
+`sundai-nanofold-bench` is the local service and submission scaffold for the Sundai nanoFold leaderboard. It provides the FastAPI service, static leaderboard UI, Docker worker flow, scorer integration, and example submission wiring used to run and evaluate competition submissions.
 
-The repo now includes four concrete pieces:
+This repository intentionally does not vendor the competition dataset. The old `data/simplefold_hackathon_v1` and `data/public_lb_v1` bundles have been removed because this benchmark now uses the official nanoFold competition data instead.
 
-- a real SimpleFold-backed starter path that calls the public `simplefold` CLI
-- a bundle builder that packages FASTA files, baselines, and train/val tokenization
-- a structure-based scorer for public-dev bundles
-- a minimal FastAPI + Docker worker stack for production orchestration
+## Data Source
+
+Use the official nanoFold competition repository for data, manifests, preprocessing, and participant-facing training instructions:
+
+https://github.com/ChrisHayduk/nanoFold-Competition/tree/main
+
+The nanoFold repo describes itself as a data-efficiency competition for protein structure prediction and includes the official train set, sample budget, hidden evaluation path, track policy, manifests, and submission API documentation.
+
+Important: downloading and preprocessing the official data can take hours. If you already have a local clone with the data prepared, reuse that local copy rather than downloading it again. New users should start the download early and expect a long first setup.
 
 ## Runtime Contract
 
-The benchmark runner mounts a bundle at `/input` and expects predictions at:
+Submissions are evaluated through the nanoFold contract rather than the removed SimpleFold/public_lb bundles. A submission should follow the API and tensor formats documented in the nanoFold competition repo, especially the `build_model`, `build_optimizer`, and `run_batch` contract used by the official tracks.
 
-```text
-/output/predictions/<target_id>_sampled_0.cif
-```
-
-The starter backend enforces these runtime rules:
-
-- `backend` is forced to `torch`
-- `nsample_per_protein` is forced to `1`
-- each FASTA input in `test/manifest.json` must produce exactly one CIF at
-  `/output/predictions/<target_id>_sampled_0.cif`
-
-The default starter reads `sequence_fasta_path` from `test/manifest.json`
-or uses cached bundle features when available, runs SimpleFold once per target,
-and writes one CIF per FASTA input into that filename contract.
-
-## Bundle Layout
-
-```text
-/input/
-  manifest.json
-  train/
-    manifest.json
-    fastas/
-    baselines/
-    processed/
-    samples/
-  val/
-    manifest.json
-    fastas/
-    baselines/
-    processed/
-    samples/
-  test/
-    manifest.json
-    fastas/
-    baselines/            # public-dev only
-  checkpoints/
-    simplefold_100M.ckpt
-```
-
-`train` and `val` can include tokenized artifacts produced by the public
-SimpleFold preprocessing scripts. `test` must include per-target FASTA files and
-may include baseline structures only for public-dev scoring.
-
-## Local Flow
-
-1. Prepare a raw dataset with `train/`, `val/`, and `test/` FASTA files.
-2. Build a bundle:
-
-```bash
-python3 tools/build_simplefold_bundle.py \
-  --raw_dir /path/to/raw_targets \
-  --output_dir data/public_dev \
-  --checkpoint_path /path/to/simplefold_100M.ckpt \
-  --simplefold_repo /path/to/ml-simplefold
-```
-
-3. Install the public `simplefold` CLI in the benchmark runtime.
-4. Run:
-
-```bash
-bash benchmark.sh
-```
-
-## Public-Dev Scoring
-
-The scorer validates that each prediction exists, is non-empty, and contains a
-parseable CA trace. It then computes:
-
-- `tm_score`
-- `lddt`
-- `rmsd`
-- `ca_rmsd`
-- `gdt_ts_like`
-
-The default ranking remains:
-
-1. `mean_tm_score` descending
-2. `runtime_sec` ascending
+The local service in this repository handles upload, queueing, worker execution, status reporting, and leaderboard display. The competition data itself should be mounted or referenced from your local nanoFold data checkout.
 
 ## Production Pieces
 
-- `service/`: FastAPI starter and leaderboard API with a SQL schema
-- `service/web/`: static frontend for leaderboard and starter registration
+- `service/`: FastAPI service and leaderboard API with a SQL schema
+- `service/web/`: static frontend for leaderboard, submission upload, run status, and metrics
 - `worker/`: Docker-based worker callback flow
 - `docker/`: API and worker Dockerfiles plus a runtime spec
+- `sdk/`: lightweight client helpers for service interaction
 
-See [docs/ARCHITECTURE.md](/Users/ryanznie/Desktop/Important/Work/Sundai/sundai-protein-folding-bench/docs/ARCHITECTURE.md),
-[docs/DEPLOYMENT.md](/Users/ryanznie/Desktop/Important/Work/Sundai/sundai-protein-folding-bench/docs/DEPLOYMENT.md), and
-[docs/SUBMISSION_SPEC.md](/Users/ryanznie/Desktop/Important/Work/Sundai/sundai-protein-folding-bench/docs/SUBMISSION_SPEC.md).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), and [docs/SUBMISSION_SPEC.md](docs/SUBMISSION_SPEC.md).
 
 ## Local Service Submission Flow
 
 The local FastAPI service exposes the leaderboard and upload UI from `service/web/`. After uploading a submission, the page polls the active run for up to five minutes. If the run is still active after that window, refresh the page to continue checking status and logs.
 
-Checkpoint files are local runtime artifacts and should stay outside git; the bundle builder copies or links them into the runtime bundle as needed.
+Runtime artifacts, downloaded datasets, checkpoints, and generated bundles should stay outside git. Keep large local data in your nanoFold checkout or another local data directory and point your training/evaluation commands at that location.
 
 ## Local Service Env
 

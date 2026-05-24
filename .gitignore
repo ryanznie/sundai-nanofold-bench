@@ -10,6 +10,7 @@ dist/
 build/
 *.db
 uploads/
+data/
 submission.zip
 /submission/
 
