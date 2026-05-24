@@ -721,6 +721,11 @@
               <tbody id="leaderboard-body"></tbody>
             </table>
             <div class="empty" id="leaderboard-empty" hidden>No scored submissions yet.</div>
+            <div id="leaderboard-pagination" style="display:flex;align-items:center;gap:10px;margin-top:12px;" hidden>
+              <button class="button" id="leaderboard-prev" type="button">&#8592;</button>
+              <span id="leaderboard-page-label" style="font-family:var(--mono-font);font-size:0.74rem;color:var(--muted);"></span>
+              <button class="button" id="leaderboard-next" type="button">&#8594;</button>
+            </div>
 
             <div id="failed-section" style="margin-top:24px;">
               <div style="margin-bottom:10px;font-family:var(--mono-font);font-size:0.73rem;color:var(--danger);letter-spacing:0.08em;text-transform:uppercase;">Failed / Cancelled</div>
@@ -1054,15 +1059,32 @@
         });
       }, 1000);
 
-      function renderLeaderboard(rows) {
+      const LEADERBOARD_PAGE_SIZE = 10;
+      let leaderboardData = [];
+      let leaderboardPage = 0;
+
+      function renderLeaderboardPage() {
         leaderboardBody.innerHTML = "";
-        leaderboardEmpty.hidden = rows.length !== 0;
+        leaderboardEmpty.hidden = leaderboardData.length !== 0;
+        const pagination = document.getElementById("leaderboard-pagination");
+        const label = document.getElementById("leaderboard-page-label");
+
+        if (leaderboardData.length === 0) {
+          pagination.hidden = true;
+          return;
+        }
+
+        const totalPages = Math.ceil(leaderboardData.length / LEADERBOARD_PAGE_SIZE);
+        if (leaderboardPage >= totalPages) leaderboardPage = totalPages - 1;
+        if (leaderboardPage < 0) leaderboardPage = 0;
 
         const latestRunTime = Math.max(
-          ...rows.map((row) => new Date(row.completed_at || row.created_at || 0).getTime()).filter(Number.isFinite)
+          ...leaderboardData.map((row) => new Date(row.completed_at || row.created_at || 0).getTime()).filter(Number.isFinite)
         );
+        const start = leaderboardPage * LEADERBOARD_PAGE_SIZE;
+        const page = leaderboardData.slice(start, start + LEADERBOARD_PAGE_SIZE);
 
-        rows.forEach((row, index) => {
+        page.forEach((row, index) => {
           const description = row.description || "";
           const shortDescription = truncateText(description, 90);
           const hasScore = row.foldscore_auc_hidden !== null && row.foldscore_auc_hidden !== undefined;
@@ -1073,7 +1095,7 @@
           const tr = document.createElement("tr");
           if (isLatestRun) tr.classList.add("latest-run");
           tr.innerHTML = `
-            <td class="rank">${index + 1}</td>
+            <td class="rank">${start + index + 1}</td>
             <td>
               <div>${row.team_name}</div>
               <div class="team-meta">
@@ -1097,13 +1119,31 @@
           leaderboardBody.appendChild(tr);
         });
 
-        const uniqueTeams = new Set(rows.map((r) => r.team_name)).size;
+        pagination.hidden = totalPages <= 1;
+        label.textContent = `${leaderboardPage + 1} / ${totalPages}`;
+        document.getElementById("leaderboard-prev").disabled = leaderboardPage === 0;
+        document.getElementById("leaderboard-next").disabled = leaderboardPage >= totalPages - 1;
+      }
+
+      function renderLeaderboard(rows) {
+        leaderboardData = rows || [];
+        leaderboardPage = 0;
+        renderLeaderboardPage();
+
+        const uniqueTeams = new Set(leaderboardData.map((r) => r.team_name)).size;
         teamsRanked.textContent = uniqueTeams;
-        document.getElementById("runs-evaluated").textContent = rows.length;
-        const scoredRows = rows.filter((r) => r.public_val_foldscore !== null && r.public_val_foldscore !== undefined);
+        document.getElementById("runs-evaluated").textContent = leaderboardData.length;
+        const scoredRows = leaderboardData.filter((r) => r.public_val_foldscore !== null && r.public_val_foldscore !== undefined);
         bestTmScore.textContent = scoredRows.length ? formatNumber(Math.max(...scoredRows.map((r) => r.public_val_foldscore))) : "—";
         lastRefresh.textContent = `Last refresh: ${new Date().toLocaleTimeString()}`;
       }
+
+      document.getElementById("leaderboard-prev").addEventListener("click", () => {
+        if (leaderboardPage > 0) { leaderboardPage--; renderLeaderboardPage(); }
+      });
+      document.getElementById("leaderboard-next").addEventListener("click", () => {
+        if (leaderboardPage < Math.ceil(leaderboardData.length / LEADERBOARD_PAGE_SIZE) - 1) { leaderboardPage++; renderLeaderboardPage(); }
+      });
 
       const FAILED_PAGE_SIZE = 5;
       let failedData = [];
