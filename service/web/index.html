@@ -567,6 +567,16 @@
         .submission-grid {
           grid-template-columns: 1fr;
         }
+
+        .tab-bar {
+          flex-wrap: wrap;
+        }
+
+        .tab-bar #last-refresh {
+          flex-basis: 100%;
+          margin-left: 0;
+          text-align: left;
+        }
       }
 
       @media (prefers-reduced-motion: no-preference) {
@@ -598,6 +608,13 @@
         margin-top: 20px;
         border-bottom: 1px solid var(--line);
         padding-bottom: 0;
+        align-items: end;
+      }
+
+      .tab-bar #last-refresh {
+        margin-left: auto;
+        padding: 0 0 7px;
+        text-align: right;
       }
 
       .tab {
@@ -677,12 +694,12 @@
               <div class="metric-value" id="best-tm-score">-</div>
             </div>
           </div>
-          <div class="microcopy" id="last-refresh" style="margin-top:14px;text-align:center;">Last refresh: pending</div>
         </section>
 
         <div class="tab-bar">
           <button class="tab active" id="tab-leaderboard" type="button">Leaderboard</button>
           <button class="tab" id="tab-teams" type="button">Teams</button>
+          <div class="microcopy" id="last-refresh">Last refresh: pending</div>
         </div>
 
         <section class="content-grid" id="leaderboard-view">
