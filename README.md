@@ -2,6 +2,10 @@
 
 `sundai-nanofold-bench` runs the local leaderboard service for the Sundai nanoFold competition. It provides the FastAPI service, static leaderboard UI, upload flow, in-process nanoFold evaluator, status tracking, and SQLite score persistence.
 
+<p align="center">
+  <img src="./nanofold-leaderboard.png" alt="NanoFold leaderboard" width="900" />
+</p>
+
 ## Data Source
 
 Competition data, manifests, preprocessing scripts, and participant training instructions live in the official nanoFold competition repository:
@@ -47,6 +51,6 @@ Submissions must follow the model, optimizer, and batch API documented in the na
 
 ## Runtime State
 
-Do not commit runtime or competition data. The live DB, logs, uploads, checkpoints, generated bundles, and downloaded data stay outside git.
+Keep runtime artifacts and competition data out of version control. This includes the live database, logs, uploads, checkpoints, generated bundles, and any downloaded datasets.
 
-A sanitized schema-only example database is tracked at `service/leaderboard.example.db` for bootstrap/schema inspection. The real `service/leaderboard.db` remains ignored.
+The repository includes a sanitized, schema-only example database at `service/leaderboard.example.db` for bootstrap and schema inspection. The live database at `service/leaderboard.db` should remain untracked.
