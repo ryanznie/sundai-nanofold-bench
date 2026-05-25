@@ -18,3 +18,4 @@ submission.zip
 # Exclude checkpoints from repository
 **/checkpoints/
 *.ckpt
+*.png
