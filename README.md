@@ -3,7 +3,7 @@
 `sundai-nanofold-bench` runs the local leaderboard service for the Sundai nanoFold competition. It provides the FastAPI service, static leaderboard UI, upload flow, in-process nanoFold evaluator, status tracking, and SQLite score persistence.
 
 <p align="center">
-  <img src="./nanofold-leaderboard.png" alt="NanoFold leaderboard" width="900" />
+  <img src="./assets/nanofold-leaderboard.png" alt="NanoFold leaderboard" width="900" />
 </p>
 
 ## Data Source
